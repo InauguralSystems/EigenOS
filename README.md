@@ -6,7 +6,8 @@ A bare-metal x86-64 operating system. The north star: run the
 up just enough hardware (memory, screen, keyboard, timer) and EigenScript is the
 shell, userland, and everything else. It's the bare-metal counterpart to
 "EigenScript is a single zero-dependency C binary," and a forcing function for
-every hidden libc/syscall dependency in the runtime.
+every hidden libc/syscall dependency in the runtime — surveyed in EigenScript's
+[freestanding dependency ledger](https://github.com/InauguralSystems/EigenScript/blob/main/docs/FREESTANDING.md).
 
 **Target hardware:** the Pentium Dual-Core T3200 (Penryn, x86-64) — the 2008
 laptop freed from dev-baseline duty when development moved to the ASUS X540NA.
@@ -47,7 +48,10 @@ rejects ELF64, so GRUB does the loading.
 - [ ] **M2** — physical memory manager (parse the multiboot memory map)
 - [ ] **M3** — paging/virtual memory, higher-half kernel
 - [ ] **M4** — PS/2 keyboard, PIT timer
-- [ ] **M5** — port the EigenScript runtime to freestanding (the forcing function)
+- [ ] **M5** — port the EigenScript runtime to freestanding (the forcing function).
+  Scoped by the [freestanding dependency ledger](https://github.com/InauguralSystems/EigenScript/blob/main/docs/FREESTANDING.md):
+  ~10 root primitives to implement against this kernel's HAL, the rest a
+  write-once portable mini-libc/libm.
 - [ ] **MN** — boot straight into an EigenScript REPL on the T3200
 
 ## License
