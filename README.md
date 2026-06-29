@@ -14,21 +14,31 @@ Developed and tested under QEMU first.
 
 ## Status
 
-**Milestone-0 (done):** boots via Multiboot1, transitions 32-bit protected mode
-→ 64-bit long mode (identity-mapped first 1 GiB, PAE + LME + paging), and writes
-to VGA text memory. ~3 source files, gcc-only build.
+**Milestone-0 (done, boots):** GRUB (Multiboot2) loads the ELF64 kernel; the
+boot stub transitions 32-bit protected mode → 64-bit long mode (identity-mapped
+first 1 GiB with 2 MiB pages, PAE + LME + paging, 64-bit GDT), then `kernel_main`
+runs in long mode and writes to VGA text memory. Verified booting under QEMU.
 
 ## Build & run
 
 ```bash
-make            # build build/EigenOS.elf  (needs only gcc + binutils)
-make verify     # assert it's a valid Multiboot1 kernel (grub-file)
-make run        # boot in QEMU            (needs qemu-system-x86_64)
+make            # build build/EigenOS.elf (the ELF64 kernel)
+make verify     # assert it's a valid Multiboot2 kernel (grub-file)
+make iso        # build a bootable ISO via GRUB
+make run        # boot the ISO in QEMU
 ```
 
-QEMU is the only extra dependency to boot-test:
-`sudo apt-get install -y qemu-system-x86`. No GRUB/ISO needed — QEMU loads the
-multiboot ELF directly via `-kernel`.
+Build needs `gcc` + `binutils`. Booting needs `qemu-system-x86`, and `make iso`
+needs `grub-pc-bin`/`grub-common` + `xorriso`:
+
+```bash
+sudo apt-get install -y qemu-system-x86 grub-pc-bin xorriso
+```
+
+The ISO is built **BIOS-only** (`grub-mkrescue -d /usr/lib/grub/i386-pc`), which
+avoids the EFI image and its `mtools` dependency — QEMU boots BIOS (SeaBIOS) by
+default. Earlier `qemu -kernel` is a dead end here: QEMU's Multiboot1 loader
+rejects ELF64, so GRUB does the loading.
 
 ## Roadmap
 

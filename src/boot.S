@@ -1,20 +1,30 @@
 # EigenOS boot stub.
 #
-# Multiboot1 loads us in 32-bit protected mode, paging off (eax=0x2BADB002,
-# ebx=multiboot info ptr). We identity-map the first 1 GiB with 2 MiB pages,
+# GRUB (Multiboot2) loads this ELF64 and enters in 32-bit protected mode, paging
+# off (ebx = multiboot2 info ptr). We identity-map the first 1 GiB with 2 MiB
+# pages,
 # turn on PAE + long mode + paging, load a 64-bit GDT, and far-jump into 64-bit
 # code, which hands off to kernel_main(). The kernel ELF is ELF64 but this
 # entry section is assembled .code32 because the CPU is still 32-bit here.
 
-.set MB_MAGIC,    0x1BADB002
-.set MB_FLAGS,    0x00000003                 # bit0 align modules, bit1 mem map
-.set MB_CHECKSUM, -(MB_MAGIC + MB_FLAGS)
+# Multiboot2 header (GRUB loads ELF64 directly; magic 0xE85250D6, arch 0=i386
+# protected-mode entry). GRUB drops us in 32-bit protected mode just like MB1,
+# so the long-mode bring-up below is unchanged.
+.set MB2_MAGIC, 0xE85250D6
+.set MB2_ARCH,  0
 
 .section .multiboot, "a"
-.align 4
-.long MB_MAGIC
-.long MB_FLAGS
-.long MB_CHECKSUM
+.align 8
+mb2_start:
+    .long MB2_MAGIC
+    .long MB2_ARCH
+    .long mb2_end - mb2_start
+    .long -(MB2_MAGIC + MB2_ARCH + (mb2_end - mb2_start))
+    .align 8                                 # end tag: type=0, flags=0, size=8
+    .word 0
+    .word 0
+    .long 8
+mb2_end:
 
 .section .bss, "aw", @nobits
 .align 16
