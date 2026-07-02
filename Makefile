@@ -11,7 +11,8 @@ LDFLAGS := -ffreestanding -nostdlib -no-pie -Wl,-T,linker.ld -Wl,-z,noexecstack 
            -Wl,--build-id=none
 QEMU    := qemu-system-x86_64
 
-OBJS   := build/boot.o build/kernel.o build/pmm.o
+OBJS   := build/boot.o build/kernel.o build/pmm.o build/serial.o \
+          build/idt.o build/isr.o
 KERNEL := build/EigenOS.elf
 ISO    := build/EigenOS.iso
 
@@ -23,11 +24,20 @@ build:
 build/boot.o: src/boot.S | build
 	$(CC) -m64 -c $< -o $@
 
-build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h | build
+build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/pmm.o: src/pmm.c src/pmm.h src/multiboot2.h | build
 	$(CC) $(CFLAGS) $< -o $@
+
+build/serial.o: src/serial.c src/serial.h src/io.h | build
+	$(CC) $(CFLAGS) $< -o $@
+
+build/idt.o: src/idt.c src/idt.h src/serial.h | build
+	$(CC) $(CFLAGS) $< -o $@
+
+build/isr.o: src/isr.S | build
+	$(CC) -m64 -c $< -o $@
 
 $(KERNEL): $(OBJS) linker.ld
 	$(CC) $(LDFLAGS) -o $@ $(OBJS)
@@ -52,6 +62,11 @@ run: $(ISO)
 run-headless: $(ISO)
 	$(QEMU) -cdrom $(ISO) -display none -no-reboot
 
+# Stream the kernel's COM1 serial log to the terminal (the M1 headless
+# observation path — no VGA-memory dump needed). Ctrl-A X to quit QEMU.
+serial: $(ISO)
+	$(QEMU) -cdrom $(ISO) -serial stdio -display none -no-reboot
+
 # Boot headless, wait for the kernel, dump the first 6 VGA text rows out of
 # the live guest via the QEMU monitor, then quit. The 0x-prefixed bytes are
 # (char, attr) pairs — chars are every other byte.
@@ -62,4 +77,4 @@ dump: $(ISO)
 clean:
 	rm -rf build
 
-.PHONY: all verify iso run run-headless dump clean
+.PHONY: all verify iso run run-headless serial dump clean

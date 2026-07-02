@@ -8,6 +8,8 @@
 #include <stdint.h>
 #include "pmm.h"
 #include "multiboot2.h"
+#include "serial.h"
+#include "idt.h"
 
 #define VGA       ((volatile uint16_t *)0xB8000)
 #define VGA_COLS  80
@@ -83,19 +85,34 @@ void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
     clear(0x07);
     put_at(0, 0, "EigenOS", 0x0F);
     put_at(0, 8, "// bare metal, x86-64 long mode", 0x07);
-    put_at(2, 0, "milestone-2: physical memory manager over the multiboot2 map.", 0x08);
+    put_at(2, 0, "M1: IDT + CPU exceptions + COM1 serial | M2: PMM | M0: long mode", 0x08);
+
+    serial_init();
+    int ser_ok = serial_selftest();
+    serial_write("\n=== EigenOS boot log (COM1) ===\n");
+    serial_write("[m0] long mode up, VGA text at 0xB8000\n");
+    serial_write("[m1] serial COM1 loopback self-test: ");
+    serial_write(ser_ok ? "OK\n" : "FAILED\n");
+
     if (mb2_magic == MB2_BOOT_MAGIC) {
         put_at(4, 0, "multiboot2: magic ok, info @ 0x", 0x07);
         put_hex32(4, 31, mb2_info, 0x0F);
+        serial_write("[m0] multiboot2 magic ok, info @ 0x");
+        serial_write_hex64(mb2_info);
+        serial_write("\n");
     } else {
         put_at(4, 0, "multiboot2: BAD MAGIC 0x", 0x4F);
         put_hex32(4, 24, mb2_magic, 0x4F);
+        serial_write("[m0] FATAL: bad multiboot2 magic\n");
         for (;;) __asm__ volatile ("hlt");
     }
 
     int rc = pmm_init(mb2_info);
     if (rc != 0) {
         put_at(6, 0, "pmm: init FAILED (no memory-map tag?)", 0x4F);
+        serial_write("[m2] pmm_init FAILED rc=");
+        serial_write_dec((uint64_t)(int64_t)rc);
+        serial_write("\n");
     } else {
         int col;
         put_at(6, 0, "memory:", 0x07);
@@ -110,11 +127,43 @@ void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
         col = put_dec(7, col + 8, pmm_free_pages(), 0x0F);
         put_at(7, col, " free", 0x07);
 
-        if (pmm_selftest())
+        serial_write("[m2] pmm: ");
+        serial_write_dec((uint64_t)pmm_region_count());
+        serial_write(" regions, ");
+        serial_write_dec(pmm_ram_bytes() >> 20);
+        serial_write(" MiB total, ");
+        serial_write_dec(pmm_total_pages());
+        serial_write(" pages tracked, ");
+        serial_write_dec(pmm_free_pages());
+        serial_write(" free\n");
+
+        if (pmm_selftest()) {
             put_at(9, 0, "pmm self-test: alloc/write/verify/free OK", 0x0A);
-        else
+            serial_write("[m2] pmm self-test: alloc/write/verify/free OK\n");
+        } else {
             put_at(9, 0, "pmm self-test: FAILED", 0x4F);
+            serial_write("[m2] pmm self-test: FAILED\n");
+        }
     }
+
+    /* M1: install exception handlers and prove the trap path with int3. */
+    serial_write("[m1] installing IDT (32 CPU exception vectors)\n");
+    idt_init();
+    serial_write("[m1] firing int3 breakpoint self-test...\n");
+    __asm__ volatile ("int3");
+    if (idt_exceptions_handled() == 1) {
+        put_at(11, 0, "idt: #BP caught + resumed OK", 0x0A);
+        serial_write("[m1] int3 returned cleanly; exceptions handled = 1 OK\n");
+    } else {
+        put_at(11, 0, "idt: exception path FAILED", 0x4F);
+        serial_write("[m1] int3 self-test FAILED\n");
+    }
+
+    put_at(12, 0, ser_ok ? "serial: COM1 loopback OK (full log on COM1)"
+                         : "serial: COM1 loopback FAILED", ser_ok ? 0x0A : 0x4F);
+    put_at(13, 0, "M1 complete. halted.", 0x0F);
+    serial_write("[m1] milestone-1 complete; halting.\n");
+
     for (;;)
         __asm__ volatile ("hlt");
 }

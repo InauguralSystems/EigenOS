@@ -21,6 +21,17 @@ first 1 GiB with 2 MiB pages, PAE + LME + paging, 64-bit GDT), then `kernel_main
 runs in long mode and writes to VGA text memory. The stub hands the Multiboot2
 info pointer (and magic) to `kernel_main`. Verified booting under QEMU.
 
+**Milestone-1 (done):** IDT + CPU exceptions + serial console. A 16550
+UART driver on COM1 (`src/serial.c`) becomes the headless logging seam —
+the whole boot sequence streams to serial (`make serial`, or QEMU
+`-serial`), no more VGA-memory dumps. An IDT (`src/idt.c` + `src/isr.S`)
+installs handlers for all 32 CPU exception vectors with a uniform saved
+frame; the dispatcher resumes cleanly from a breakpoint (`int3`, a trap)
+and reports-then-halts on a genuine fault. Two on-boot self-tests prove
+it: a UART loopback, and an `int3` that is caught and resumed. The GDT
+was already set up by M0's boot stub, so M1 reuses it (a TSS/IST is
+deferred until a ring-3 boundary needs a stack switch).
+
 **Milestone-2 (done):** the physical memory manager. `pmm_init` walks the
 Multiboot2 memory-map tag and builds a 4 KiB-page bitmap allocator over the
 first 1 GiB (the range the boot stub identity-maps), reserving low memory
@@ -39,6 +50,8 @@ make            # build build/EigenOS.elf (the ELF64 kernel)
 make verify     # assert it's a valid Multiboot2 kernel (grub-file)
 make iso        # build a bootable ISO via GRUB
 make run        # boot the ISO in QEMU
+make serial     # boot headless, stream the COM1 kernel log to the terminal
+make dump       # boot headless, dump the VGA text screen out of the guest
 ```
 
 Build needs `gcc` + `binutils`. Booting needs `qemu-system-x86`, and `make iso`
@@ -56,7 +69,7 @@ rejects ELF64, so GRUB does the loading.
 ## Roadmap
 
 - [x] **M0** — Multiboot → long mode → VGA text output
-- [ ] **M1** — GDT/IDT, CPU exception handlers, serial (COM1) for headless logging
+- [x] **M1** — IDT + CPU exception handlers, serial (COM1) for headless logging
 - [x] **M2** — physical memory manager (parse the multiboot memory map)
 - [ ] **M3** — paging/virtual memory, higher-half kernel
 - [ ] **M4** — PS/2 keyboard, PIT timer
