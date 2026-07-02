@@ -2,8 +2,8 @@
  *
  * QEMU (and a real 8042 after BIOS setup) delivers scancode set 1 by
  * default, so no controller reprogramming is needed here — just read
- * port 0x60 on IRQ1, translate, and buffer. US layout, letters honor a
- * tracked shift state; other keys use the base table. */
+ * port 0x60 on IRQ1, translate, and buffer. US layout; a tracked shift
+ * state uppercases letters and selects the shifted-symbol table (M6). */
 #include "keyboard.h"
 #include "io.h"
 #include <stdint.h>
@@ -30,6 +30,19 @@ static const char kmap[128] = {
     [0x39]=' ',
 };
 
+/* M6: shifted non-letter keys (US layout). Letters keep the arithmetic
+ * uppercase path in kbd_irq; everything else EigenScript needs from a
+ * keyboard — * + " ( ) [ ] { } : < > ? ! — lives here. */
+static const char kmap_shift[128] = {
+    [0x02]='!',[0x03]='@',[0x04]='#',[0x05]='$',[0x06]='%',
+    [0x07]='^',[0x08]='&',[0x09]='*',[0x0A]='(',[0x0B]=')',
+    [0x0C]='_',[0x0D]='+',
+    [0x1A]='{',[0x1B]='}',
+    [0x27]=':',[0x28]='"',[0x29]='~',
+    [0x2B]='|',
+    [0x33]='<',[0x34]='>',[0x35]='?',
+};
+
 void keyboard_init(void) {
     g_head = g_tail = 0;
     g_shift = 0;
@@ -47,9 +60,14 @@ void kbd_irq(void) {
     if (sc == 0x2A || sc == 0x36) { g_shift = 1; return; }   /* shift down */
     if (sc == 0xAA || sc == 0xB6) { g_shift = 0; return; }   /* shift up   */
     if (sc & 0x80) return;                                    /* other release */
-    char c = kmap[sc & 0x7F];
-    if (!c) return;
-    if (g_shift && c >= 'a' && c <= 'z') c = (char)(c - 32);
+    char c;
+    if (g_shift && kmap_shift[sc & 0x7F]) {
+        c = kmap_shift[sc & 0x7F];                            /* shifted symbol */
+    } else {
+        c = kmap[sc & 0x7F];
+        if (!c) return;
+        if (g_shift && c >= 'a' && c <= 'z') c = (char)(c - 32);
+    }
     ring_push(c);
 }
 

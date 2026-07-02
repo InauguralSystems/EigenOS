@@ -81,18 +81,16 @@ upstream, never worked around.
 
 ## Phase 2 — the EigenScript machine
 
-- [ ] **M6 — a REPL you can actually type into.** The keymap shift-maps
-      letters only: `* + " ( ) [ ]` cannot be typed, which rules out
-      multiplication, strings, lists, and calls. And input is one logical
-      line per Enter, so `define` and observer loops cannot be entered
-      interactively at all. Work: full shifted-symbol keymap
-      (`src/keyboard.c`); multi-line continuation in `eigs_repl` (a line
-      ending in `:` or continuing an indented block accumulates; a blank
-      line submits); verified end-to-end in QEMU via monitor `sendkey`.
-      Also banked here (already measured, small): `set gfxpayload=text`
-      in grub.cfg (kill the works-in-QEMU/black-screen-on-real-BIOS
-      class) and a `make usb` target (the ISO is already isohybrid —
-      document/wrap the `dd`).
+- [x] **M6 — a REPL you can actually type into (DONE 2026-07-02).**
+      Full shifted-symbol keymap (`src/keyboard.c`, `kmap_shift`);
+      multi-line input in `eigs_repl` (a line ending in `:` opens a
+      block that accumulates; a blank line submits — so `define`, `for`,
+      and observer loops are typed interactively); `set gfxpayload=text`
+      in grub.cfg; `make usb USB=/dev/sdX` (guarded — refuses to guess a
+      device). Verified end-to-end in QEMU via monitor `sendkey`:
+      `a is 6*7`→42, string concat with `"`/`+`/`!`, a typed multi-line
+      `define` (`sq of 12`→144), a typed observer loop (`converged`→1),
+      list literals via brackets; T3200 sim gate re-run green.
 - [ ] **M7 — boot the T3200.** The crossing from emulated to real. The
       T3200 currently runs Linux — **dual-boot via its existing GRUB, not
       a wipe**: copy `build/EigenOS.elf` into its `/boot`, add a

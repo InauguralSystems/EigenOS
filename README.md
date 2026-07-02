@@ -151,10 +151,13 @@ rejects ELF64, so GRUB does the loading.
 **Next** (the niche-but-general arc — full detail and rationale in
 [ROADMAP.md](ROADMAP.md)):
 
-- [ ] **M6** — a REPL you can actually type into: shifted-symbol keymap
-  (`* + " ( ) [ ]` are untypable today), multi-line `define`/loop input,
-  `gfxpayload=text`, `make usb`
-- [ ] **M7** — boot the T3200 (USB stick; VGA + keyboard, no serial)
+- [x] **M6** — a REPL you can actually type into: full shifted-symbol
+  keymap, multi-line block input (`:` opens, blank line runs — `define`
+  and observer loops typed interactively), `gfxpayload=text`, guarded
+  `make usb`. Verified via QEMU sendkey: `6*7`→42, typed `define`→144,
+  typed observer loop→converged.
+- [ ] **M7** — boot the T3200 (dual-boot via its resident Linux's GRUB;
+  VGA + keyboard, no serial)
 - [ ] **M8** — machine vitals as observed bindings
   (`converged of heap_pressure` as a kernel-policy primitive)
 - [ ] **M9** — multitasking: task = `EigsState`, the scheduler as an

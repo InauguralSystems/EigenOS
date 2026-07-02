@@ -105,6 +105,18 @@ $(ISO): $(KERNEL) grub.cfg
 
 iso: $(ISO)
 
+# Write the (isohybrid) ISO to a USB stick for real-hardware boot (M7).
+# Deliberately refuses to guess the device: OVERWRITES whatever you name.
+#   make usb USB=/dev/sdX
+usb: $(ISO)
+	@if [ -z "$(USB)" ]; then \
+		echo "usage: make usb USB=/dev/sdX   (WARNING: overwrites that device)"; \
+		echo "hint: the dual-boot path needs no stick — copy $(KERNEL) to the"; \
+		echo "      target's /boot and add a 'multiboot2' GRUB menuentry."; \
+		exit 1; \
+	fi
+	sudo dd if=$(ISO) of=$(USB) bs=4M conv=fsync status=progress
+
 run: $(ISO)
 	$(QEMU) -cdrom $(ISO)
 

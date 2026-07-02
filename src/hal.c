@@ -221,8 +221,10 @@ int eigs_run_demo(void) {
  * PS/2 keyboard (kbd_getchar) in, serial + VGA out. One open runtime, so
  * state persists across lines. Each Enter evals the line; the last
  * expression's value is echoed (numbers/strings), errors reported. `print`
- * output already flows through the console fan-out. One logical line per
- * Enter — enough for expressions, assignments, `print`, observer loops. */
+ * output already flows through the console fan-out. Single lines eval on
+ * Enter; a line ending in ':' opens a block that accumulates until a blank
+ * line submits it (M6) — so `define`, `for`, and observer loops can be
+ * typed interactively. */
 static void repl_show_value(EigsValue *v) {
     if (!v) return;
     switch (eigs_value_type(v)) {
@@ -244,14 +246,40 @@ static void repl_show_value(EigsValue *v) {
     }
 }
 
+/* Evaluate one submitted program (a single line or an accumulated block),
+ * echo the result/error, then assert the boot-stack canary — an overflow
+ * past stack_bottom must fail HERE, loudly, not as a delayed
+ * layout-dependent fault. */
+static void repl_eval(const char *src) {
+    EigsValue *v = eigs_eval_string(src);
+    if (eigs_has_error()) {
+        con_write("error: ");
+        con_write(eigs_last_error_message());
+        con_putc('\n');
+        eigs_clear_error();
+    } else {
+        repl_show_value(v);
+    }
+    if (v) eigs_value_release(v);
+    if (!stack_canary_ok()) {
+        con_write("PANIC: boot-stack overflow (canary trampled by that "
+                  "eval). Halting.\n");
+        for (;;) __asm__ volatile ("cli; hlt");
+    }
+}
+
 void eigs_repl(void) {
     g_vga_on = 1;
     vga_clear();
-    con_write("EigenScript REPL on EigenOS -- type an expression, Enter to eval.\n");
+    con_write("EigenScript REPL on EigenOS -- Enter evals. A line ending in ':'\n");
+    con_write("opens a block: keep typing lines, a blank line runs it.\n");
     con_write("eigs> ");
 
     char line[512];
-    int len = 0;
+    static char prog[4096];       /* accumulated block (M6 multi-line) */
+    int len  = 0;                 /* current line fill */
+    int plen = 0;                 /* accumulated block fill */
+    int cont = 0;                 /* 1 = inside a ':'-opened block */
     for (;;) {
         int c = kbd_getchar();
         if (c < 0) { __asm__ volatile ("hlt"); continue; }   /* wait for a key */
@@ -259,27 +287,40 @@ void eigs_repl(void) {
         if (c == '\n') {
             con_putc('\n');
             line[len] = 0;
-            if (len > 0) {
-                EigsValue *v = eigs_eval_string(line);
-                if (eigs_has_error()) {
-                    con_write("error: ");
-                    con_write(eigs_last_error_message());
-                    con_putc('\n');
-                    eigs_clear_error();
-                } else {
-                    repl_show_value(v);
+            /* Does this line open a block? Trailing ':' (spaces ignored). */
+            int e = len;
+            while (e > 0 && line[e - 1] == ' ') e--;
+            int opens = (e > 0 && line[e - 1] == ':');
+
+            if (!cont) {
+                if (len == 0) { con_write("eigs> "); continue; }
+                if (opens) {                      /* start accumulating */
+                    plen = 0;
+                    for (int i = 0; i < len; i++) prog[plen++] = line[i];
+                    prog[plen++] = '\n';
+                    cont = 1;
+                    con_write("....> ");
+                } else {                          /* single line: eval now */
+                    repl_eval(line);
+                    con_write("eigs> ");
                 }
-                if (v) eigs_value_release(v);
-                /* Assert-inside: an overflow past stack_bottom must fail
-                 * HERE, loudly, not as a delayed layout-dependent fault. */
-                if (!stack_canary_ok()) {
-                    con_write("PANIC: boot-stack overflow (canary trampled "
-                              "by that eval). Halting.\n");
-                    for (;;) __asm__ volatile ("cli; hlt");
+            } else {
+                if (len == 0) {                   /* blank line: run block */
+                    prog[plen] = 0;
+                    cont = 0;
+                    repl_eval(prog);
+                    con_write("eigs> ");
+                } else if (plen + len + 2 > (int)sizeof(prog)) {
+                    con_write("error: block too large, discarded\n");
+                    cont = 0;
+                    con_write("eigs> ");
+                } else {                          /* keep accumulating */
+                    for (int i = 0; i < len; i++) prog[plen++] = line[i];
+                    prog[plen++] = '\n';
+                    con_write("....> ");
                 }
             }
             len = 0;
-            con_write("eigs> ");
         } else if (c == '\b') {
             if (len > 0) { len--; con_write("\b \b"); }
         } else if (len < (int)sizeof(line) - 1) {
