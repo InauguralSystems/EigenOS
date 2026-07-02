@@ -129,6 +129,29 @@ reboot, and verify `cat /proc/cmdline` shows `memmap=64K$0x1000000`.
 `memmap` keeps Linux out of the buffer; `iomem=relaxed` unblocks /dev/mem
 (Ubuntu ships STRICT_DEVMEM).
 
+**Then validate the whole channel end-to-end — no EigenOS needed.** The
+one open question is whether this firmware preserves DRAM across a warm
+reset. Prove it Linux→Linux (ONLY after the cmdline reboot above — before
+it, Linux may be using that page):
+
+```
+echo "DRAMTEST-$(date +%s)" | sudo dd of=/dev/mem bs=1 \
+    seek=$((0x1000000)) conv=notrunc status=none
+sudo reboot        # warm reset — no power cycle
+# after logging back in:
+sudo dd if=/dev/mem bs=1 skip=$((0x1000000)) count=32 status=none | cat -v
+```
+
+Sentinel survives → the crash-log channel is proven on this hardware;
+record the result (either way) in `docs/T3200-BOOT-LOG.md` and push. If
+it does NOT survive, say so loudly in the log — the post-mortem plan
+falls back to the VGA screen + beep codes only.
+
+**While rebooting anyway:** enter the firmware setup / boot menu once and
+note in `docs/T3200-BOOT-LOG.md` what it offers — a "Legacy"/"CSM"/"Boot
+mode" toggle and the boot-menu key (F12/F10?). That answers which path
+the first EigenOS boot uses (see "Boot attempt order").
+
 ### After a boot attempt
 
 Record what happened in `docs/T3200-BOOT-LOG.md` and push: which verdicts
