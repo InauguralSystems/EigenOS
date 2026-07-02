@@ -14,6 +14,7 @@
 #include "pic.h"
 #include "timer.h"
 #include "keyboard.h"
+#include "kheap.h"
 
 #define VGA       ((volatile uint16_t *)0xB8000)
 #define VGA_COLS  80
@@ -108,6 +109,45 @@ static int paging_selftest(void) {
     return ok;
 }
 
+/* Exercise the heap: many mixed-size allocations with per-block sentinel
+ * patterns (proving no overlap), interleaved frees, a realloc that must
+ * preserve contents, then free-all which must coalesce the arena back.
+ * Returns 1 on success. This is the substrate the runtime's malloc rides. */
+static int kheap_selftest(void) {
+    kheap_init();
+    enum { N = 64 };
+    void *ptr[N];
+    size_t sz[N];
+    for (int i = 0; i < N; i++) {
+        sz[i] = (size_t)(1 + ((i * 37) % 300));       /* 1..300 bytes, varied */
+        ptr[i] = kmalloc(sz[i]);
+        if (!ptr[i]) return 0;
+        for (size_t j = 0; j < sz[i]; j++)
+            ((uint8_t *)ptr[i])[j] = (uint8_t)(i * 7 + j);
+    }
+    /* verify no allocation clobbered another */
+    for (int i = 0; i < N; i++)
+        for (size_t j = 0; j < sz[i]; j++)
+            if (((uint8_t *)ptr[i])[j] != (uint8_t)(i * 7 + j)) return 0;
+    /* free the even ones, realloc the odd ones larger, re-verify */
+    for (int i = 0; i < N; i += 2) { kfree(ptr[i]); ptr[i] = 0; }
+    for (int i = 1; i < N; i += 2) {
+        size_t ns = sz[i] + 500;
+        uint8_t *np = krealloc(ptr[i], ns);
+        if (!np) return 0;
+        for (size_t j = 0; j < sz[i]; j++)
+            if (np[j] != (uint8_t)(i * 7 + j)) return 0;   /* preserved */
+        ptr[i] = np;
+    }
+    /* kcalloc must zero */
+    uint8_t *z = kcalloc(256, 1);
+    if (!z) return 0;
+    for (int j = 0; j < 256; j++) if (z[j]) return 0;
+    kfree(z);
+    for (int i = 1; i < N; i += 2) kfree(ptr[i]);
+    return kheap_used_bytes() == 0;                    /* all reclaimed */
+}
+
 /* mb2_info: physical address of the Multiboot2 boot-information struct —
  * M2's memory map lives there. Delivered via edi/esi from the boot stub. */
 void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
@@ -198,6 +238,16 @@ void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
     } else {
         put_at(13, 0, "paging self-test: FAILED", 0x4F);
         serial_write("[m3] paging self-test: FAILED\n");
+    }
+
+    /* --- M5 substrate: kernel heap over page_alloc + the VMM --- */
+    if (kheap_selftest()) {
+        put_at(14, 0, "kheap: malloc/free/realloc/calloc OK", 0x0A);
+        serial_write("[m5] kheap self-test: mixed alloc/free/realloc/calloc, "
+                     "no overlap, full reclaim OK\n");
+    } else {
+        put_at(14, 0, "kheap: self-test FAILED", 0x4F);
+        serial_write("[m5] kheap self-test: FAILED\n");
     }
 
     /* --- M4: hardware interrupts (PIC + PIT timer + PS/2 keyboard) --- */

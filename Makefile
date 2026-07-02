@@ -13,7 +13,7 @@ QEMU    := qemu-system-x86_64
 
 OBJS   := build/boot.o build/kernel.o build/pmm.o build/serial.o \
           build/idt.o build/isr.o build/paging.o build/pic.o \
-          build/timer.o build/keyboard.o
+          build/timer.o build/keyboard.o build/kheap.o
 KERNEL := build/EigenOS.elf
 ISO    := build/EigenOS.iso
 
@@ -25,7 +25,7 @@ build:
 build/boot.o: src/boot.S | build
 	$(CC) -m64 -c $< -o $@
 
-build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h src/paging.h src/pic.h src/timer.h src/keyboard.h | build
+build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h src/paging.h src/pic.h src/timer.h src/keyboard.h src/kheap.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/pmm.o: src/pmm.c src/pmm.h src/multiboot2.h | build
@@ -50,6 +50,9 @@ build/timer.o: src/timer.c src/timer.h src/io.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/keyboard.o: src/keyboard.c src/keyboard.h src/io.h | build
+	$(CC) $(CFLAGS) $< -o $@
+
+build/kheap.o: src/kheap.c src/kheap.h src/pmm.h src/paging.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 $(KERNEL): $(OBJS) linker.ld
