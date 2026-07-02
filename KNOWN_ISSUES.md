@@ -1,48 +1,57 @@
 # Known issues
 
-## M5/MN: layout-sensitive crash in the freestanding runtime (open)
+(none open)
 
-**Symptom.** Running the EigenScript runtime freestanding (M5) works for the
-first one or two `eigs_eval_string` calls — `6 * 7 = 42`, a `for`/`range`/
-`str`/`print` program (`sum 0..9 = 45`), and (at some layouts) list/string
-programs and the observer loop all succeed. But a subsequent eval — a third
-`eigs_eval_string`, a function `define`, or an observer loop — intermittently
-faults with `#UD (invalid opcode)` at an address inside `.rodata`. The M1
-exception handler reports it over serial; the faulting `rip` is a wild VM
-dispatch target (a corrupted opcode indexes past the computed-goto table).
+## RESOLVED — M5/MN: layout-sensitive crash in the freestanding runtime
 
-**Why it's a heisenbug.** The fault is **deterministic per build but moves
-with every rebuild** — adding or removing unrelated code shifts the link
-layout and changes which eval faults (or whether it faults at all). It
-survives zeroing both the kernel heap (`kmalloc`) and the boot stack
-(`kernel_main`), so it is not simply reused-dirty memory.
+**Symptom (historical).** After the first one or two `eigs_eval_string`
+calls, a subsequent eval — a third eval, a function `define`, or an
+observer loop — faulted with `#UD (invalid opcode)` at an address inside
+`.rodata`: a corrupted opcode sent the VM's computed-goto dispatch into
+data. The fault was deterministic per build but **moved with every
+rebuild**, and survived zeroing both the kernel heap and the boot stack.
 
-**Diagnosis.** This is the signature of an **uninitialized-memory read** in
-the runtime: hosted glibc hands back fresh, zeroed pages, so an uninitialized
-field reads as a benign `0`; bare metal (different garbage, different layout)
-reads a value that, interpreted as a pointer/opcode, sends the VM into data.
-It is exactly the bug class the runtime's gates do **not** cover — ASan and
-UBSan catch out-of-bounds and UB, but **MSan** (uninitialized reads) is
-deferred upstream (needs an instrumented libc + arena annotations). EigenOS,
-by giving the runtime a non-glibc substrate, is acting as an MSan-style
-differential and has surfaced a real latent bug.
+**Root cause (found 2026-07-02, fixed upstream in EigenScript PR #361).**
+Not an uninitialized read — a **C stack overflow**. The EigenScript
+compiler's `Compiler` struct embedded a 12 KiB `Local[512]` array by value,
+and `compile_node_inner` stack-declares a `Compiler` for every nested
+function: **~12.7 KiB of stack per AST level**. Compiling even the 5-deep
+M5 print program overran the old **64 KiB** boot stack. Hosted (8 MiB
+stacks + a guard page) never noticed; on bare metal there is no guard page,
+so the overflow silently trampled the `.bss` placed below `stack_bottom`
+and the corruption detonated on a *later* eval — wherever the current link
+layout happened to put the victim global. That explains every observed
+property: deterministic per build, moved with every rebuild, survived
+heap/stack zeroing, invisible to the hosted suite and sanitizers.
 
-**This is the headline forcing-function finding of EigenOS.** The bare-metal
-port did its job: it found a class of runtime bug invisible to the hosted
-test suite (2365/2365, ASan/UBSan clean).
+**How it was found.** The uninit-read hypothesis was instrumented and
+refuted first: the full hosted suite passed under `MALLOC_PERTURB_` and
+under a new `make poison` build (0xAA-fill of xmalloc blocks, realloc
+tails, and the env freelist's parked arrays), and a 104-step embed-API
+REPL soak — the multi-eval-on-one-state pattern the suite never exercises —
+ran clean under Valgrind memcheck in both the hosted and freestanding
+profiles. The same soak re-run with `ulimit -s 64` (the boot-stack size)
+segfaulted in `compile_node_inner`'s prologue at eval 2, and gdb measured
+the ~12.7 KiB frames.
 
-**Next steps (a focused session, not a quick patch).**
-1. Run the freestanding runtime under **MSan** hosted (build the mini-libc +
-   runtime with `-fsanitize=memory`) to name the uninitialized read directly.
-2. Or attach **gdb to the QEMU stub** (`-s -S`), break in `vm_run`'s dispatch,
-   and catch the step where the opcode/`ip` goes wild — walk back to the
-   struct field that was never initialized.
-3. Fix upstream in EigenScript (initialize the field), add a regression, and
-   the freestanding profile + EigenOS boot-to-REPL become deterministic.
+**The fix, both sides.**
+- **Upstream (EigenScript PR #361):** the `locals` array is heap-allocated;
+  `compile_node_inner`'s frame dropped 12,704 → 1,440 bytes. CI now runs
+  `tools/embed_stack_soak.sh`, the REPL soak inside a 64 KiB stack rlimit.
+- **EigenOS:** the boot stack grew 64 KiB → 1 MiB (worst-case compile
+  stack at `COMPILE_MAX_DEPTH` is ~184 KiB post-fix), and `kernel_main`
+  paints a **canary strip at `stack_bottom`** (`src/stackguard.h`) that the
+  REPL checks after every eval — any future overflow panics loudly at the
+  eval that caused it instead of leaving a layout-dependent time bomb.
+  `eigs_run_demo` now runs the three former tripwires (third eval,
+  define + call, observer loop) at every boot as the regression.
 
-**What works today.** The kernel (M0–M4), the heap, TLS, SSE, the HAL glue,
-the VGA console, and the REPL are all correct and verified. The REPL boots
-and is interactive (assignments, variable persistence across lines, value
-echo, error reporting) until the accumulated runtime state trips the bug
-above. This is tracked on the `mn-repl` branch; `main` stays at the verified
-M5 commit until the runtime bug is fixed.
+**The forcing-function lesson stands, sharpened.** The bare-metal port did
+surface a real latent runtime bug invisible to the hosted gates — just in a
+different resource class than diagnosed: the hosted suite bounds *what the
+runtime computes*, but nothing hosted bounded *how much C stack it uses*.
+EigenOS, with a 64 KiB stack, was the first consumer to apply that
+constraint — and the fix (an 8.8× smaller compile frame) benefits every
+embedder. The prove-outside/assert-inside pattern is now permanent: the
+64 KiB-rlimit soak proves the bound hosted; the boot-stack canary asserts
+it on the metal.

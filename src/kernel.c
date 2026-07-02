@@ -15,6 +15,7 @@
 #include "timer.h"
 #include "keyboard.h"
 #include "kheap.h"
+#include "stackguard.h"
 
 extern int  eigs_run_demo(void);  /* src/hal.c — drives the runtime (SSE side) */
 extern void eigs_repl(void);      /* src/hal.c — interactive REPL, never returns */
@@ -152,21 +153,27 @@ static int kheap_selftest(void) {
 }
 
 /* mb2_info: physical address of the Multiboot2 boot-information struct —
- * M2's memory map lives there. Delivered via edi/esi from the boot stub. */
-extern char stack_bottom[];       /* boot.S — for the stack pre-zero below */
+ * M2's memory map lives there. Delivered via edi/esi from the boot stub.
+ * (stack_bottom comes from stackguard.h — used for the stack pre-zero and
+ * the canary paint below.) */
 
 void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
-    /* Zero the unused stack up to (just below) our own frame. Hosted glibc
-     * hands the runtime fresh, zeroed pages for stack and heap; bare metal
-     * does not, which surfaced a layout-sensitive uninitialized-read in the
-     * runtime (an MSan-class bug the ASan/UBSan gates don't catch) as a wild
-     * VM dispatch. Zeroing stack + heap (kheap zeros too) makes "fresh memory
-     * reads as 0" hold here as it does hosted. See the M5/MN notes + the
-     * upstream finding filed against the runtime. */
+    /* Zero the unused stack up to (just below) our own frame, then paint a
+     * canary strip at stack_bottom. There is no guard page on bare metal, so
+     * a stack overflow silently corrupts whatever the linker placed below
+     * stack_bottom — that was the mn-repl "#UD heisenbug": the EigenScript
+     * compiler used ~12.7 KiB of stack per AST level (fixed upstream,
+     * EigenScript PR #361; boot stack also grown 64 KiB -> 1 MiB) and the
+     * trampled-.bss fault moved with every rebuild. The canary is the
+     * assert-inside half of the fix: stack_canary_ok() is checked after
+     * every REPL eval, turning any future overflow into a loud panic at the
+     * eval that caused it instead of a delayed layout-dependent wild fault. */
     {
         uint64_t rsp;
         __asm__ volatile ("mov %%rsp, %0" : "=r"(rsp));
         for (char *p = stack_bottom; p < (char *)(rsp - 2048); p++) *p = 0;
+        for (int i = 0; i < STACK_CANARY_QWORDS; i++)
+            ((volatile uint64_t *)stack_bottom)[i] = STACK_CANARY;
     }
     clear(0x07);
     put_at(0, 0, "EigenOS", 0x0F);

@@ -31,7 +31,18 @@ mb2_end:
 .global stack_bottom
 .global stack_top
 stack_bottom:
-.skip 65536                                  # 64 KiB boot stack (runtime recursion)
+.skip 1048576                                # 1 MiB boot stack. 64 KiB was the
+                                             # mn-repl "#UD heisenbug": the
+                                             # EigenScript compiler cost ~12.7 KiB
+                                             # of stack PER AST LEVEL (fixed
+                                             # upstream, EigenScript PR #361) and
+                                             # the overflow silently trampled the
+                                             # .bss below this symbol. Worst-case
+                                             # compile stack is now ~184 KiB at
+                                             # COMPILE_MAX_DEPTH; 1 MiB leaves
+                                             # headroom for parser + VM + libm.
+                                             # kernel.c paints a canary strip here
+                                             # and panics if it is ever crossed.
 stack_top:
 
 .align 4096                                  # page tables (must be 4 KiB aligned)

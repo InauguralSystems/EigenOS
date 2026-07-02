@@ -45,7 +45,7 @@ build:
 build/boot.o: src/boot.S | build
 	$(CC) -m64 -c $< -o $@
 
-build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h src/paging.h src/pic.h src/timer.h src/keyboard.h src/kheap.h | build
+build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h src/paging.h src/pic.h src/timer.h src/keyboard.h src/kheap.h src/stackguard.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/pmm.o: src/pmm.c src/pmm.h src/multiboot2.h | build
@@ -87,7 +87,7 @@ build/eigsfs_%.o: $(EIGS)/src/freestanding/%.c | build
 
 # The HAL glue: runtime cflags (SSE) so variadic FP + the double return
 # from eigs_value_as_num are handled; -Isrc for the kernel headers.
-build/hal.o: src/hal.c src/kheap.h src/serial.h src/timer.h src/keyboard.h src/vga.h | build
+build/hal.o: src/hal.c src/kheap.h src/serial.h src/timer.h src/keyboard.h src/vga.h src/stackguard.h | build
 	$(CC) $(RT_CFLAGS) -Isrc $< -o $@
 
 $(KERNEL): $(OBJS) $(EIGS_OBJS) linker.ld

@@ -18,6 +18,7 @@
 #include "serial.h"
 #include "timer.h"
 #include "keyboard.h"
+#include "stackguard.h"
 #include "vga.h"
 #include "eigs_embed.h"        /* from EigenScript/src, via -I in the Makefile */
 
@@ -173,15 +174,46 @@ int eigs_run_demo(void) {
         return 0;
     }
 
-    /* NOTE: further evals (a third eigs_eval_string, function `define`, or
-     * an observer loop) hit a LAYOUT-SENSITIVE crash on bare metal — a wild
-     * VM dispatch (#UD in .rodata) from a corrupted opcode. It survives
-     * heap- and stack-zeroing and moves with every rebuild, the signature of
-     * an uninitialized-memory read in the runtime (the one bug class the
-     * hosted ASan/UBSan gates miss — MSan is deferred upstream). See
-     * KNOWN_ISSUES.md. The two evals above are the reliable subset; the REPL
-     * below works until the accumulated state trips this. Root-causing needs
-     * hosted MSan + gdb-on-QEMU. */
+    /* The evals below used to be the heisenbug tripwires: a third eval, a
+     * function `define`, and an observer loop faulted layout-dependently
+     * (#UD in .rodata, moved with every rebuild). Root cause was NOT an
+     * uninitialized read: the EigenScript compiler used ~12.7 KiB of C stack
+     * per AST level (a by-value Compiler with an inline Local[512] array in
+     * every nested-function frame), overflowing the old 64 KiB boot stack
+     * during compile and silently trampling the .bss below stack_bottom — no
+     * guard page on bare metal, so the corruption detonated evals later,
+     * wherever the current layout put the victim global. Fixed upstream
+     * (EigenScript PR #361, frame 12.7 KiB -> 1.4 KiB); the boot stack is
+     * 1 MiB now and a canary strip at stack_bottom is checked after every
+     * eval. These run at boot as the regression. */
+    EigsValue *v3 = eigs_eval_string(
+        "define square(k) as:\n"
+        "    return k * k\n"
+        "square of 12");
+    int def_ok = v3 && eigs_value_type(v3) == EIGS_TYPE_NUM &&
+                 (int)eigs_value_as_num(v3) == 144;
+    if (v3) eigs_value_release(v3);
+    serial_write(def_ok ? "[mn] eval 3 (define + call) = 144 OK\n"
+                        : "[mn] eval 3 (define + call) FAILED\n");
+    if (!def_ok) return 0;
+
+    EigsValue *v4 = eigs_eval_string(
+        "e is 5\n"
+        "loop while not converged:\n"
+        "    e is e * 0.5\n"
+        "converged");
+    int obs_ok = v4 && eigs_value_type(v4) == EIGS_TYPE_NUM &&
+                 (int)eigs_value_as_num(v4) == 1;
+    if (v4) eigs_value_release(v4);
+    serial_write(obs_ok ? "[mn] eval 4 (observer loop) converged OK\n"
+                        : "[mn] eval 4 (observer loop) FAILED\n");
+    if (!obs_ok) return 0;
+
+    if (!stack_canary_ok()) {
+        serial_write("[mn] PANIC: boot-stack canary trampled during demo\n");
+        return 0;
+    }
+    serial_write("[mn] stack canary intact after 4 evals OK\n");
     return 1;
 }
 
@@ -238,6 +270,13 @@ void eigs_repl(void) {
                     repl_show_value(v);
                 }
                 if (v) eigs_value_release(v);
+                /* Assert-inside: an overflow past stack_bottom must fail
+                 * HERE, loudly, not as a delayed layout-dependent fault. */
+                if (!stack_canary_ok()) {
+                    con_write("PANIC: boot-stack overflow (canary trampled "
+                              "by that eval). Halting.\n");
+                    for (;;) __asm__ volatile ("cli; hlt");
+                }
             }
             len = 0;
             con_write("eigs> ");
