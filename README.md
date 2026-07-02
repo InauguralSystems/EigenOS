@@ -98,10 +98,21 @@ rejects ELF64, so GRUB does the loading.
 - [x] **M2** — physical memory manager (parse the multiboot memory map)
 - [x] **M3** — paging/virtual memory + higher-half direct map
 - [x] **M4** — PS/2 keyboard, PIT timer (the read_char + clock HAL roots)
-- [ ] **M5** — port the EigenScript runtime to freestanding (the forcing function).
+- [~] **M5** — port the EigenScript runtime to freestanding (the forcing function).
   Scoped by the [freestanding dependency ledger](https://github.com/InauguralSystems/EigenScript/blob/main/docs/FREESTANDING.md):
   ~10 root primitives to implement against this kernel's HAL, the rest a
   write-once portable mini-libc/libm.
+  - [x] kernel heap (`src/kheap.c`) — `malloc`/`free`/`realloc`/`calloc`
+    over `page_alloc` + the M3 VMM; the runtime's `malloc` binds here.
+  - [ ] enable SSE (the runtime is all doubles; the kernel core is
+    `-mno-sse`, so bring up `CR0.MP`/`CR4.OSFXSR` and build the runtime
+    objects with `-msse2`).
+  - [ ] HAL glue — bind the freestanding profile's ~30 residue symbols to
+    kernel services: heap (above), `printf`/`fprintf`/`putc`/`fflush`/
+    `stdout`/`stderr` → serial, `clock_gettime`/`usleep` → PIT,
+    `exit`/`abort` → halt, `pthread_*` → single-thread stubs.
+  - [ ] compile the runtime + `src/freestanding/` mini-libc into the image
+    and call `eigs_eval_string` on a program; print the result over serial.
 - [ ] **MN** — boot straight into an EigenScript REPL on the T3200
 
 ## License
