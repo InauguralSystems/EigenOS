@@ -26,11 +26,29 @@ static void put_at(int row, int col, const char *s, uint8_t attr) {
         VGA[i] = cell(*s, attr);
 }
 
-void kernel_main(void) {
+static void put_hex32(int row, int col, uint32_t v, uint8_t attr) {
+    static const char digits[] = "0123456789abcdef";
+    int i = row * VGA_COLS + col;
+    for (int shift = 28; shift >= 0; shift -= 4, i++)
+        VGA[i] = cell(digits[(v >> shift) & 0xF], attr);
+}
+
+#define MB2_BOOT_MAGIC 0x36d76289u   /* in eax at GRUB handoff (MB2 spec 3.3) */
+
+/* mb2_info: physical address of the Multiboot2 boot-information struct —
+ * M2's memory map lives there. Delivered via edi/esi from the boot stub. */
+void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
     clear(0x07);
     put_at(0, 0, "EigenOS", 0x0F);
     put_at(0, 8, "// bare metal, x86-64 long mode", 0x07);
     put_at(2, 0, "milestone-0: boot + long mode + VGA. next: IDT, then the runtime.", 0x08);
+    if (mb2_magic == MB2_BOOT_MAGIC) {
+        put_at(4, 0, "multiboot2: magic ok, info @ 0x", 0x07);
+        put_hex32(4, 31, mb2_info, 0x0F);
+    } else {
+        put_at(4, 0, "multiboot2: BAD MAGIC 0x", 0x4F);
+        put_hex32(4, 24, mb2_magic, 0x4F);
+    }
     for (;;)
         __asm__ volatile ("hlt");
 }

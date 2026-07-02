@@ -55,6 +55,8 @@ gdt64_pointer:
 .type _start, @function
 _start:
     mov   $stack_top, %esp                   # multiboot gives no usable stack
+    mov   %eax, %ebp                         # save MB2 magic; eax is clobbered below
+                                             # (ebx = MB2 info ptr survives untouched)
 
     # --- page tables: identity-map 0..1GiB with 2 MiB pages ---
     mov   $pdpt, %eax
@@ -104,6 +106,11 @@ long_mode_start:
     mov   %ax, %ss
     mov   $stack_top, %rsp
 
+    # SysV handoff: GRUB's Multiboot2 info pointer and magic become
+    # kernel_main(info, magic). The 32-bit moves zero-extend into rdi/rsi;
+    # GRUB places the info struct below 4 GiB, inside our identity map.
+    mov   %ebx, %edi
+    mov   %ebp, %esi
     call  kernel_main                          # never returns
 .hang:
     cli
