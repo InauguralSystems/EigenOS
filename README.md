@@ -21,6 +21,19 @@ first 1 GiB with 2 MiB pages, PAE + LME + paging, 64-bit GDT), then `kernel_main
 runs in long mode and writes to VGA text memory. The stub hands the Multiboot2
 info pointer (and magic) to `kernel_main`. Verified booting under QEMU.
 
+**Milestone-3 (done):** virtual memory. `paging_init` (`src/paging.c`)
+builds fresh 4-level page tables — a low-1 GiB identity map so the
+running kernel survives the `CR3` load, plus a **higher-half direct map
+of all physical RAM** at `0xFFFF800000000000` — then switches `CR3`.
+`map_page`/`unmap_page` do on-demand 4 KiB mappings, allocating
+intermediate tables from the PMM. The direct map (`phys_to_virt`) lifts
+M2's 1 GiB cap: the PMM now tracks all RAM (verified at 4 GiB —
+~1.05M pages vs the old 262K), reachable through the map. A self-test
+maps a page, writes through it, and confirms the same frame aliases via
+the direct map. Relocating kernel *execution* into the higher half (to
+free the low half for ring-3 userland) is deferred until a userland
+milestone needs it. Verified via `make serial`.
+
 **Milestone-1 (done):** IDT + CPU exceptions + serial console. A 16550
 UART driver on COM1 (`src/serial.c`) becomes the headless logging seam —
 the whole boot sequence streams to serial (`make serial`, or QEMU
@@ -33,15 +46,15 @@ was already set up by M0's boot stub, so M1 reuses it (a TSS/IST is
 deferred until a ring-3 boundary needs a stack switch).
 
 **Milestone-2 (done):** the physical memory manager. `pmm_init` walks the
-Multiboot2 memory-map tag and builds a 4 KiB-page bitmap allocator over the
-first 1 GiB (the range the boot stub identity-maps), reserving low memory
-(< 1 MiB), the kernel image (`_kernel_start`/`_kernel_end` from the linker),
-and the Multiboot2 info block. `pmm_alloc_page`/`pmm_free_page` are the
-substrate of the `page_alloc` HAL root the EigenScript freestanding heap will
-stand on (M5). An on-boot self-test (allocate → pattern-fill → verify → free,
-free-count round-trip) prints its result to VGA; `make dump` reads it back
-headless. RAM beyond 1 GiB is reported but not yet tracked (M3 brings virtual
-memory).
+Multiboot2 memory-map tag and builds a 4 KiB-page bitmap allocator over all
+available RAM (a 64 GiB build cap; through M2 it was capped to the boot stub's
+1 GiB identity map, lifted at M3 once the direct map made every frame
+reachable), reserving low memory (< 1 MiB), the kernel image
+(`_kernel_start`/`_kernel_end` from the linker), and the Multiboot2 info block.
+`pmm_alloc_page`/`pmm_free_page` are the substrate of the `page_alloc` HAL root
+the EigenScript freestanding heap will stand on (M5). An on-boot self-test
+(allocate → pattern-fill → verify → free, free-count round-trip) prints its
+result to VGA; `make dump` reads it back headless.
 
 ## Build & run
 
@@ -71,7 +84,7 @@ rejects ELF64, so GRUB does the loading.
 - [x] **M0** — Multiboot → long mode → VGA text output
 - [x] **M1** — IDT + CPU exception handlers, serial (COM1) for headless logging
 - [x] **M2** — physical memory manager (parse the multiboot memory map)
-- [ ] **M3** — paging/virtual memory, higher-half kernel
+- [x] **M3** — paging/virtual memory + higher-half direct map
 - [ ] **M4** — PS/2 keyboard, PIT timer
 - [ ] **M5** — port the EigenScript runtime to freestanding (the forcing function).
   Scoped by the [freestanding dependency ledger](https://github.com/InauguralSystems/EigenScript/blob/main/docs/FREESTANDING.md):

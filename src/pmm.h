@@ -20,6 +20,7 @@ void     pmm_free_page(uint64_t addr);
 uint64_t pmm_total_pages(void);
 uint64_t pmm_free_pages(void);
 uint64_t pmm_ram_bytes(void);        /* usable RAM the manager covers */
+uint64_t pmm_highest_addr(void);     /* top of the highest usable region */
 int      pmm_region_count(void);     /* available regions seen in the map */
 
 #endif /* EIGENOS_PMM_H */

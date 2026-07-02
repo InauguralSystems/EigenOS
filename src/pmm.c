@@ -1,11 +1,11 @@
-/* Physical memory manager (milestone-2).
+/* Physical memory manager (milestone-2, cap lifted at M3).
  *
- * A fixed 32 KiB bitmap tracks 4 KiB pages up to 1 GiB — exactly the
- * range the boot stub identity-maps, so every page the allocator hands
- * out is already addressable. RAM beyond 1 GiB (the T3200 has 3.8 GiB)
- * stays untracked until M3 brings real virtual memory; the cap is a
- * deliberate M2 simplification, surfaced in the stats so it can't be
- * mistaken for the machine's true size.
+ * A bitmap tracks 4 KiB pages of all available RAM up to a 64 GiB build
+ * cap (2 MiB bitmap in .bss; the T3200 has 3.8 GiB). Through M2 the
+ * allocator was capped to the boot stub's 1 GiB identity map; M3's
+ * higher-half direct map (paging.c) makes every physical page reachable
+ * at PHYS_MAP_BASE + phys, so the cap is gone — allocated pages are
+ * touched through phys_to_virt(), not by their raw physical address.
  *
  * Reserved and never handed out: everything below 1 MiB (BIOS/VGA/low
  * memory), the kernel image ([_kernel_start, _kernel_end), symbols from
@@ -16,9 +16,9 @@
 #include "multiboot2.h"
 
 #define PAGE_SIZE   4096ULL
-#define MAX_BYTES   (1ULL << 30)                 /* 1 GiB identity-map cap */
-#define MAX_PAGES   (MAX_BYTES / PAGE_SIZE)      /* 262144 */
-#define BITMAP_LEN  (MAX_PAGES / 64)             /* 4096 u64s = 32 KiB */
+#define MAX_BYTES   (64ULL << 30)                /* 64 GiB build cap */
+#define MAX_PAGES   (MAX_BYTES / PAGE_SIZE)      /* 16,777,216 */
+#define BITMAP_LEN  (MAX_PAGES / 64)             /* 262144 u64s = 2 MiB */
 
 /* Bit set = page FREE. Starts all-zero (.bss): everything reserved
  * until the memory map proves a page is usable. */
@@ -26,6 +26,7 @@ static uint64_t g_bitmap[BITMAP_LEN];
 static uint64_t g_total;                          /* pages ever marked free */
 static uint64_t g_free;
 static uint64_t g_ram_bytes;
+static uint64_t g_top;                            /* highest tracked phys byte */
 static int      g_regions;
 
 extern char _kernel_start[], _kernel_end[];       /* linker.ld */
@@ -84,6 +85,7 @@ int pmm_init(uint32_t mb2_info) {
         if (hi > MAX_BYTES) hi = MAX_BYTES;
         lo = (lo + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);        /* round in */
         hi = hi & ~(PAGE_SIZE - 1);
+        if (hi > g_top) g_top = hi;
         for (uint64_t a = lo; a < hi; a += PAGE_SIZE)
             mark_free(a / PAGE_SIZE);
     }
@@ -114,7 +116,8 @@ void pmm_free_page(uint64_t addr) {
     g_free++;
 }
 
-uint64_t pmm_total_pages(void) { return g_total; }
-uint64_t pmm_free_pages(void)  { return g_free; }
-uint64_t pmm_ram_bytes(void)   { return g_ram_bytes; }
-int      pmm_region_count(void){ return g_regions; }
+uint64_t pmm_total_pages(void)  { return g_total; }
+uint64_t pmm_free_pages(void)   { return g_free; }
+uint64_t pmm_ram_bytes(void)    { return g_ram_bytes; }
+uint64_t pmm_highest_addr(void) { return g_top; }
+int      pmm_region_count(void) { return g_regions; }
