@@ -93,12 +93,38 @@ upstream, never worked around.
       in grub.cfg (kill the works-in-QEMU/black-screen-on-real-BIOS
       class) and a `make usb` target (the ISO is already isohybrid —
       document/wrap the `dd`).
-- [ ] **M7 — boot the T3200.** The crossing from emulated to real. USB
-      stick from `make usb`; expect VGA + keyboard only (no COM1 on the
-      laptop, so the on-boot self-tests must render their verdicts to
-      VGA — audit that before burning the stick). Success = the M5/MN
-      self-tests green on screen and a hand-typed observer loop
-      converging on 2008 silicon.
+- [ ] **M7 — boot the T3200.** The crossing from emulated to real. The
+      T3200 currently runs Linux — **dual-boot via its existing GRUB, not
+      a wipe**: copy `build/EigenOS.elf` into its `/boot`, add a
+      menuentry (`multiboot2 /boot/EigenOS.elf` + `set gfxpayload=text`),
+      reboot and pick it. The iteration loop is copy → reboot → test →
+      reboot back to Linux (scp delivery if its network works; GRUB's
+      menu is the recovery path). The USB stick (`make usb`; the ISO is
+      already isohybrid) stays as the fallback/portable path.
+      Prep, in order:
+      1. **Inventory under the resident Linux** (no live USB needed):
+         `lspci -nn` (NIC for M13; FireWire; ExpressCard bridge),
+         `/proc/tty/driver/serial` (a hidden onboard 16550 = free serial
+         console), `/proc/cpuinfo` flags (confirm ssse3, no sse4/rdrand),
+         `dmesg | grep e820` (the REAL memory map — the PMM has only ever
+         seen QEMU's clean one), `dmidecode` (exact model).
+      2. **Persistent-RAM crash log**: EigenOS logs to a reserved
+         physical buffer with a magic header; after a hang, warm-reboot
+         into Linux and read it back via `/dev/mem`. The resident Linux
+         is the post-mortem debugger — no serial hardware needed.
+         Validate once that this BIOS preserves DRAM across warm reset.
+         Plus panic beep/LED codes for when even VGA is dead.
+      3. Expect VGA + keyboard only live (no COM1 unless the inventory
+         finds one) — audit that the on-boot self-tests render verdicts
+         to VGA before the first attempt.
+      Success = the M5/MN self-tests green on screen and a hand-typed
+      observer loop converging on 2008 silicon.
+      Later upgrade (only when live debugging earns it): ExpressCard
+      16550 + minimal PCI enumeration → serial console from the ASUS
+      (USB-serial dongle + null modem) → a gdb remote stub over that
+      link for true remote debugging. USB-to-USB is a dead end (both
+      machines are USB hosts; a bridge cable would need a full USB host
+      stack in EigenOS).
 
 ## Phase 3 — the self-observing computer
 
