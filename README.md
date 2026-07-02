@@ -18,7 +18,19 @@ Developed and tested under QEMU first.
 **Milestone-0 (done, boots):** GRUB (Multiboot2) loads the ELF64 kernel; the
 boot stub transitions 32-bit protected mode → 64-bit long mode (identity-mapped
 first 1 GiB with 2 MiB pages, PAE + LME + paging, 64-bit GDT), then `kernel_main`
-runs in long mode and writes to VGA text memory. Verified booting under QEMU.
+runs in long mode and writes to VGA text memory. The stub hands the Multiboot2
+info pointer (and magic) to `kernel_main`. Verified booting under QEMU.
+
+**Milestone-2 (done):** the physical memory manager. `pmm_init` walks the
+Multiboot2 memory-map tag and builds a 4 KiB-page bitmap allocator over the
+first 1 GiB (the range the boot stub identity-maps), reserving low memory
+(< 1 MiB), the kernel image (`_kernel_start`/`_kernel_end` from the linker),
+and the Multiboot2 info block. `pmm_alloc_page`/`pmm_free_page` are the
+substrate of the `page_alloc` HAL root the EigenScript freestanding heap will
+stand on (M5). An on-boot self-test (allocate → pattern-fill → verify → free,
+free-count round-trip) prints its result to VGA; `make dump` reads it back
+headless. RAM beyond 1 GiB is reported but not yet tracked (M3 brings virtual
+memory).
 
 ## Build & run
 
@@ -45,7 +57,7 @@ rejects ELF64, so GRUB does the loading.
 
 - [x] **M0** — Multiboot → long mode → VGA text output
 - [ ] **M1** — GDT/IDT, CPU exception handlers, serial (COM1) for headless logging
-- [ ] **M2** — physical memory manager (parse the multiboot memory map)
+- [x] **M2** — physical memory manager (parse the multiboot memory map)
 - [ ] **M3** — paging/virtual memory, higher-half kernel
 - [ ] **M4** — PS/2 keyboard, PIT timer
 - [ ] **M5** — port the EigenScript runtime to freestanding (the forcing function).

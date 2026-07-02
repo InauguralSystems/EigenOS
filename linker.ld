@@ -6,12 +6,15 @@ ENTRY(_start)
 SECTIONS
 {
     . = 1M;
+    _kernel_start = .;
+
 
     .multiboot : ALIGN(8) { *(.multiboot) }
     .text      : ALIGN(16) { *(.text*) }
     .rodata    : ALIGN(16) { *(.rodata*) }
     .data      : ALIGN(16) { *(.data*) }
     .bss       : ALIGN(16) { *(.bss*) *(COMMON) }
+    _kernel_end = .;
 
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
 }

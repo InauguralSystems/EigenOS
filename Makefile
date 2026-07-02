@@ -11,7 +11,7 @@ LDFLAGS := -ffreestanding -nostdlib -no-pie -Wl,-T,linker.ld -Wl,-z,noexecstack 
            -Wl,--build-id=none
 QEMU    := qemu-system-x86_64
 
-OBJS   := build/boot.o build/kernel.o
+OBJS   := build/boot.o build/kernel.o build/pmm.o
 KERNEL := build/EigenOS.elf
 ISO    := build/EigenOS.iso
 
@@ -23,7 +23,10 @@ build:
 build/boot.o: src/boot.S | build
 	$(CC) -m64 -c $< -o $@
 
-build/kernel.o: src/kernel.c | build
+build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h | build
+	$(CC) $(CFLAGS) $< -o $@
+
+build/pmm.o: src/pmm.c src/pmm.h src/multiboot2.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 $(KERNEL): $(OBJS) linker.ld
