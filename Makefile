@@ -49,7 +49,14 @@ run: $(ISO)
 run-headless: $(ISO)
 	$(QEMU) -cdrom $(ISO) -display none -no-reboot
 
+# Boot headless, wait for the kernel, dump the first 6 VGA text rows out of
+# the live guest via the QEMU monitor, then quit. The 0x-prefixed bytes are
+# (char, attr) pairs — chars are every other byte.
+dump: $(ISO)
+	{ sleep 6; echo "xp /960bx 0xb8000"; sleep 1; echo quit; } | \
+		$(QEMU) -cdrom $(ISO) -display none -monitor stdio | grep -a ': 0x'
+
 clean:
 	rm -rf build
 
-.PHONY: all verify iso run run-headless clean
+.PHONY: all verify iso run run-headless dump clean
