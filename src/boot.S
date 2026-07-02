@@ -28,6 +28,8 @@ mb2_end:
 
 .section .bss, "aw", @nobits
 .align 16
+.global stack_bottom
+.global stack_top
 stack_bottom:
 .skip 65536                                  # 64 KiB boot stack (runtime recursion)
 stack_top:

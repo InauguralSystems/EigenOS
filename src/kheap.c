@@ -100,7 +100,14 @@ void *kmalloc(size_t n) {
             }
             b->free = 0;
             g_used += b->size;
-            return (void *)((uint64_t)b + HDR);
+            void *payload = (void *)((uint64_t)b + HDR);
+            /* Zero fresh allocations. Hosted malloc hands back fresh mmap
+             * pages that are already zero, so the runtime can rely on
+             * newly-allocated memory reading as 0; a reused dirty block here
+             * would feed it garbage (a stale pointer -> a wild VM dispatch).
+             * Matching that behavior keeps bare metal == hosted. */
+            kmemset(payload, 0, n);
+            return payload;
         }
         if (grow(n + HDR) != 0) return 0;               /* map more, retry once */
         coalesce();

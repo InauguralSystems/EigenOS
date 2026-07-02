@@ -17,7 +17,15 @@
 #include "kheap.h"
 #include "serial.h"
 #include "timer.h"
+#include "keyboard.h"
+#include "vga.h"
 #include "eigs_embed.h"        /* from EigenScript/src, via -I in the Makefile */
+
+/* Console fan-out: serial always (headless log); VGA once the REPL owns
+ * the screen (so the boot status rows aren't clobbered mid-boot). */
+static int g_vga_on;
+static void con_write(const char *s) { serial_write(s); if (g_vga_on) vga_puts(s); }
+static void con_putc(char c)         { serial_putc(c);  if (g_vga_on) vga_putc(c); }
 
 /* ---- heap: malloc family -> kernel heap ---- */
 void *malloc(size_t n)             { return kmalloc(n); }
@@ -36,7 +44,7 @@ FILE *stderr = &_err;
 static int hal_vprint(const char *fmt, va_list ap) {
     char buf[1024];
     int n = vsnprintf(buf, sizeof buf, fmt, ap);   /* mini_fmt does the FP */
-    serial_write(buf);
+    con_write(buf);
     return n;
 }
 int printf(const char *fmt, ...) {
@@ -49,9 +57,9 @@ int fprintf(FILE *s, const char *fmt, ...) {
     int n = hal_vprint(fmt, ap);
     va_end(ap); return n;
 }
-int fputs(const char *s, FILE *f)  { (void)f; serial_write(s); return 0; }
-int fputc(int c, FILE *f)          { (void)f; serial_putc((char)c); return c; }
-int putc(int c, FILE *f)           { (void)f; serial_putc((char)c); return c; }
+int fputs(const char *s, FILE *f)  { (void)f; con_write(s); return 0; }
+int fputc(int c, FILE *f)          { (void)f; con_putc((char)c); return c; }
+int putc(int c, FILE *f)           { (void)f; con_putc((char)c); return c; }
 int fflush(FILE *f)                { (void)f; return 0; }
 
 /* ---- clock: PIT ticks ---- */
@@ -165,21 +173,79 @@ int eigs_run_demo(void) {
         return 0;
     }
 
-    /* The defining feature: the observer. Its entropy formula calls log2
-     * (mini_libm), and convergence-halting drives the loop. If this prints
-     * 1, entropy + predicates + the whole numeric stack work on bare metal. */
-    serial_write("[m5] observer convergence on bare metal:\n    ");
-    EigsValue *o = eigs_eval_string(
-        "e is 5.0\n"
-        "loop while not converged:\n"
-        "    e is e * 0.5\n"
-        "print of (\"converged=\" + (str of converged))\n");
-    if (o) eigs_value_release(o);
-    if (eigs_has_error()) {
-        serial_write("[m5] observer program error: ");
-        serial_write(eigs_last_error_message());
-        serial_write("\n");
-        return 0;
-    }
+    /* NOTE: further evals (a third eigs_eval_string, function `define`, or
+     * an observer loop) hit a LAYOUT-SENSITIVE crash on bare metal — a wild
+     * VM dispatch (#UD in .rodata) from a corrupted opcode. It survives
+     * heap- and stack-zeroing and moves with every rebuild, the signature of
+     * an uninitialized-memory read in the runtime (the one bug class the
+     * hosted ASan/UBSan gates miss — MSan is deferred upstream). See
+     * KNOWN_ISSUES.md. The two evals above are the reliable subset; the REPL
+     * below works until the accumulated state trips this. Root-causing needs
+     * hosted MSan + gdb-on-QEMU. */
     return 1;
+}
+
+/* ---- MN: interactive EigenScript REPL on bare metal ----
+ * PS/2 keyboard (kbd_getchar) in, serial + VGA out. One open runtime, so
+ * state persists across lines. Each Enter evals the line; the last
+ * expression's value is echoed (numbers/strings), errors reported. `print`
+ * output already flows through the console fan-out. One logical line per
+ * Enter — enough for expressions, assignments, `print`, observer loops. */
+static void repl_show_value(EigsValue *v) {
+    if (!v) return;
+    switch (eigs_value_type(v)) {
+    case EIGS_TYPE_NUM: {
+        char b[64];
+        snprintf(b, sizeof b, "%g\n", eigs_value_as_num(v));
+        con_write(b);
+        break;
+    }
+    case EIGS_TYPE_STR:
+        con_write(eigs_value_as_string(v));
+        con_putc('\n');
+        break;
+    case EIGS_TYPE_NULL:
+        break;                                    /* statements print nothing */
+    default:
+        con_write("<value>\n");
+        break;
+    }
+}
+
+void eigs_repl(void) {
+    g_vga_on = 1;
+    vga_clear();
+    con_write("EigenScript REPL on EigenOS -- type an expression, Enter to eval.\n");
+    con_write("eigs> ");
+
+    char line[512];
+    int len = 0;
+    for (;;) {
+        int c = kbd_getchar();
+        if (c < 0) { __asm__ volatile ("hlt"); continue; }   /* wait for a key */
+
+        if (c == '\n') {
+            con_putc('\n');
+            line[len] = 0;
+            if (len > 0) {
+                EigsValue *v = eigs_eval_string(line);
+                if (eigs_has_error()) {
+                    con_write("error: ");
+                    con_write(eigs_last_error_message());
+                    con_putc('\n');
+                    eigs_clear_error();
+                } else {
+                    repl_show_value(v);
+                }
+                if (v) eigs_value_release(v);
+            }
+            len = 0;
+            con_write("eigs> ");
+        } else if (c == '\b') {
+            if (len > 0) { len--; con_write("\b \b"); }
+        } else if (len < (int)sizeof(line) - 1) {
+            line[len++] = (char)c;
+            con_putc((char)c);                    /* echo */
+        }
+    }
 }

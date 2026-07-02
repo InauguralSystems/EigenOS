@@ -16,7 +16,8 @@
 #include "keyboard.h"
 #include "kheap.h"
 
-extern int eigs_run_demo(void);   /* src/hal.c — drives the runtime (SSE side) */
+extern int  eigs_run_demo(void);  /* src/hal.c — drives the runtime (SSE side) */
+extern void eigs_repl(void);      /* src/hal.c — interactive REPL, never returns */
 
 #define VGA       ((volatile uint16_t *)0xB8000)
 #define VGA_COLS  80
@@ -152,7 +153,21 @@ static int kheap_selftest(void) {
 
 /* mb2_info: physical address of the Multiboot2 boot-information struct —
  * M2's memory map lives there. Delivered via edi/esi from the boot stub. */
+extern char stack_bottom[];       /* boot.S — for the stack pre-zero below */
+
 void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
+    /* Zero the unused stack up to (just below) our own frame. Hosted glibc
+     * hands the runtime fresh, zeroed pages for stack and heap; bare metal
+     * does not, which surfaced a layout-sensitive uninitialized-read in the
+     * runtime (an MSan-class bug the ASan/UBSan gates don't catch) as a wild
+     * VM dispatch. Zeroing stack + heap (kheap zeros too) makes "fresh memory
+     * reads as 0" hold here as it does hosted. See the M5/MN notes + the
+     * upstream finding filed against the runtime. */
+    {
+        uint64_t rsp;
+        __asm__ volatile ("mov %%rsp, %0" : "=r"(rsp));
+        for (char *p = stack_bottom; p < (char *)(rsp - 2048); p++) *p = 0;
+    }
     clear(0x07);
     put_at(0, 0, "EigenOS", 0x0F);
     put_at(0, 8, "// bare metal, x86-64 long mode", 0x07);
@@ -287,20 +302,9 @@ void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
         serial_write("[m5] EigenScript run FAILED\n");
     }
 
-    put_at(17, 0, "type keys -> echoed to COM1 (timer+kbd IRQs live)", 0x0F);
-    serial_write("[m4] entering idle loop; keyboard echo (type / sendkey):\n");
-
-    /* Idle loop: hlt sleeps until the next interrupt (timer at 100 Hz or a
-     * keypress); drain and echo any buffered keystrokes to serial + VGA. */
-    int kcol = 0;
-    for (;;) {
-        int c = kbd_getchar();
-        if (c >= 0) {
-            serial_putc((char)c);
-            if (c == '\n') { kcol = 0; }
-            else if (c == '\b') { if (kcol > 0) kcol--; put_at(18, kcol, " ", 0x0E); }
-            else if (kcol < VGA_COLS) { put_at(18, kcol++, (char[]){(char)c, 0}, 0x0E); }
-        }
-        __asm__ volatile ("hlt");
-    }
+    /* --- MN: hand off to the interactive EigenScript REPL (never returns).
+     * Reuses the runtime state eigs_run_demo opened on this thread; PS/2
+     * keyboard in, serial + VGA out. --- */
+    serial_write("[mn] starting the EigenScript REPL (keyboard + serial/VGA)\n");
+    eigs_repl();
 }

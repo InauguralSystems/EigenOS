@@ -33,7 +33,7 @@ EIGS_OBJS := $(addprefix build/eigs_,$(addsuffix .o,$(EIGS_SRCS))) \
 
 OBJS   := build/boot.o build/kernel.o build/pmm.o build/serial.o \
           build/idt.o build/isr.o build/paging.o build/pic.o \
-          build/timer.o build/keyboard.o build/kheap.o
+          build/timer.o build/keyboard.o build/kheap.o build/vga.o
 KERNEL := build/EigenOS.elf
 ISO    := build/EigenOS.iso
 
@@ -75,6 +75,9 @@ build/keyboard.o: src/keyboard.c src/keyboard.h src/io.h | build
 build/kheap.o: src/kheap.c src/kheap.h src/pmm.h src/paging.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
+build/vga.o: src/vga.c src/vga.h | build
+	$(CC) $(CFLAGS) $< -o $@
+
 # EigenScript runtime objects (freestanding + SSE).
 build/eigs_%.o: $(EIGS)/src/%.c | build
 	$(CC) $(RT_CFLAGS) $< -o $@
@@ -84,7 +87,7 @@ build/eigsfs_%.o: $(EIGS)/src/freestanding/%.c | build
 
 # The HAL glue: runtime cflags (SSE) so variadic FP + the double return
 # from eigs_value_as_num are handled; -Isrc for the kernel headers.
-build/hal.o: src/hal.c src/kheap.h src/serial.h src/timer.h | build
+build/hal.o: src/hal.c src/kheap.h src/serial.h src/timer.h src/keyboard.h src/vga.h | build
 	$(CC) $(RT_CFLAGS) -Isrc $< -o $@
 
 $(KERNEL): $(OBJS) $(EIGS_OBJS) linker.ld
