@@ -54,23 +54,20 @@ and the post-mortem debugger. Hard rules:
 - This is a ~3.8 GiB machine: plain `make`, one heavy job at a time.
 - To push results you need `gh auth login` (or an SSH key) on this box.
 
-### First visit: the M7 inventory (do this before anything else)
+### Inventory: DONE (docs/T3200-INVENTORY.md, 2026-07-02) — don't re-run
 
-Run, and commit the raw output to the repo as `docs/T3200-INVENTORY.md`
-(the dev side needs it):
+The load-bearing facts: Gateway M-7317U, GM45/ICH9M; CPU matches the sim
+gate exactly; fragmented e820 (PMM verified hole-safe); **no serial** (all
+four ISA UARTs probe `unknown` — the screen is the only live console);
+**firmware is UEFI** (Ubuntu boots grub-efi from the ESP on sda2); /boot is
+NOT a separate partition; Wi-Fi works (scp/gh fine); the disk logs ATA
+exceptions — don't depend on it beyond /boot.
 
-```
-sudo dmidecode -t system -t chassis      # exact model
-grep -m1 flags /proc/cpuinfo             # MUST have ssse3; MUST LACK sse4_1/rdrand
-sudo dmesg | grep -i "e820\|BIOS-provided" # the REAL memory map (PMM has only seen QEMU's)
-sudo lspci -nn                           # NIC model (M13), FireWire, ExpressCard bridge
-sudo cat /proc/tty/driver/serial         # uart:16550A at 0x3F8 = free serial console!
-ip a                                     # working network -> scp delivery from the dev box
-lsblk -f && findmnt /boot                # is /boot its own partition? (GRUB paths below)
-```
-
-Flag in the committed notes: any e820 reserved holes below 4 GiB (the PMM
-must respect them), whether a real UART exists, and the NIC model.
+**UEFI status (verified on the dev side under OVMF, 2026-07-02):** the
+kernel boots green under GRUB-EFI — handoff, fragmented memory map, all
+self-tests, REPL. But UEFI leaves the display in a GOP graphics mode, so
+VGA text at 0xB8000 does NOT render: booted via the EFI menuentry, EigenOS
+runs blind (and there's no serial here). Hence the attempt order below.
 
 ### Build the kernel here (primary delivery path)
 
@@ -84,30 +81,38 @@ cd EigenOS && make && make verify
 
 (Alternative: `scp` a `build/EigenOS.elf` built on the dev box.)
 
-### Dual-boot setup
+### Boot attempt order (M7)
+
+**1. USB stick via the firmware's legacy/CSM boot path — the primary
+attempt.** A 2008 EFI almost certainly ships CSM. Build the stick
+(`make usb USB=/dev/sdX` — on THIS machine only use a removable stick,
+never the internal disk), reboot into the firmware boot menu (usually F12
+or F10 on Gateways; check Setup for a "Legacy"/"CSM"/"Boot mode" toggle
+and note what you find in docs/T3200-BOOT-LOG.md). Pick the USB in legacy
+mode → BIOS GRUB → real VGA text mode → self-test verdicts on screen →
+the REPL. This is the path where everything works as already designed.
+
+**2. The EFI GRUB menuentry (dual-boot, no media) — only useful once a
+framebuffer console exists.** Proven under OVMF to boot and run fine, but
+the screen stays in GOP graphics mode: the REPL runs invisibly and this
+laptop has no serial. Do not use this path for the first attempt; it
+becomes the everyday path after the framebuffer console lands. For
+reference when that day comes:
 
 ```
 sudo cp build/EigenOS.elf /boot/EigenOS.elf
 sudo tee -a /etc/grub.d/40_custom >/dev/null <<'G'
 menuentry "EigenOS" {
-    set gfxpayload=text
     insmod multiboot2
     multiboot2 /boot/EigenOS.elf
     boot
 }
 G
-sudo update-grub
+sudo update-grub    # also set GRUB_TIMEOUT_STYLE=menu, GRUB_TIMEOUT=5
 ```
 
-Gotchas:
-- If `findmnt /boot` shows a **separate /boot partition**, GRUB's path is
-  `/EigenOS.elf`, not `/boot/EigenOS.elf`.
-- Distro GRUB often hides the menu: ensure `/etc/default/grub` has
-  `GRUB_TIMEOUT_STYLE=menu` and `GRUB_TIMEOUT=5`, then `update-grub` —
-  otherwise you can't pick EigenOS (or get back to Linux easily).
-- Reboot → pick EigenOS → expect the boot self-test verdicts on the VGA
-  screen ending in the REPL. There is no serial on this laptop; the screen
-  is the console. Power-cycle → pick Linux to come back.
+(`/boot` is not a separate partition here, so the GRUB path really is
+`/boot/EigenOS.elf`.)
 
 ### After a boot attempt
 

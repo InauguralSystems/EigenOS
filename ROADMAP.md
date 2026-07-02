@@ -92,35 +92,40 @@ upstream, never worked around.
       `define` (`sq of 12`→144), a typed observer loop (`converged`→1),
       list literals via brackets; T3200 sim gate re-run green.
 - [ ] **M7 — boot the T3200.** The crossing from emulated to real. The
-      T3200 currently runs Linux — **dual-boot via its existing GRUB, not
-      a wipe**: copy `build/EigenOS.elf` into its `/boot`, add a
-      menuentry (`multiboot2 /boot/EigenOS.elf` + `set gfxpayload=text`),
-      reboot and pick it. The iteration loop is copy → reboot → test →
-      reboot back to Linux (scp delivery if its network works; GRUB's
-      menu is the recovery path). The USB stick (`make usb`; the ISO is
-      already isohybrid) stays as the fallback/portable path.
-      Prep, in order:
-      1. **Inventory under the resident Linux** (no live USB needed):
-         `lspci -nn` (NIC for M13; FireWire; ExpressCard bridge),
-         `/proc/tty/driver/serial` (a hidden onboard 16550 = free serial
-         console), `/proc/cpuinfo` flags (confirm ssse3, no sse4/rdrand),
-         `dmesg | grep e820` (the REAL memory map — the PMM has only ever
-         seen QEMU's clean one), `dmidecode` (exact model).
-      2. **Persistent-RAM crash log**: EigenOS logs to a reserved
-         physical buffer with a magic header; after a hang, warm-reboot
-         into Linux and read it back via `/dev/mem`. The resident Linux
-         is the post-mortem debugger — no serial hardware needed.
-         Validate once that this BIOS preserves DRAM across warm reset.
-         Plus panic beep/LED codes for when even VGA is dead.
-      3. Expect VGA + keyboard only live (no COM1 unless the inventory
-         finds one) — audit that the on-boot self-tests render verdicts
-         to VGA before the first attempt.
+      The target is a **Gateway M-7317U** (inventory: docs/T3200-INVENTORY.md,
+      captured 2026-07-02): GM45/ICH9M, CPU flags match the sim gate
+      exactly, ~3.94 GiB with a heavily fragmented e820 (PMM verified
+      hole-safe: free-by-inclusion over MB2 AVAILABLE entries, and it
+      parsed OVMF's 6-region map live), Wi-Fi works (scp delivery OK),
+      **no serial** (all four ISA UARTs probe `unknown`), no FireWire /
+      ExpressCard, disk throwing ATA exceptions (don't depend on it).
+      **The firmware is UEFI** (Ubuntu boots via grub-efi from an ESP;
+      2008-vintage EFI). EFI handoff is PROVEN: under OVMF+GRUB-EFI the
+      whole kernel boots green through the runtime tripwires (serial
+      log, 2026-07-02). The open risk is VIDEO ONLY — UEFI leaves the
+      display in a GOP graphics mode, so 0xB8000 text writes don't
+      render: a running REPL you cannot see, and there is no serial.
+      Attempt order:
+      1. **USB stick via the firmware's legacy/CSM boot entry** (a 2008
+         EFI almost certainly has CSM). BIOS-path boot → real VGA text →
+         everything works as designed. `make usb USB=/dev/sdX`. This is
+         the primary attempt; also check the firmware setup screen for a
+         "Legacy"/"CSM" toggle while there.
+      2. **Persistent-RAM crash log** (still the pre-attempt build item):
+         EigenOS logs to a reserved physical buffer with a magic header;
+         after a hang, warm-reboot into Linux and read it back via
+         `/dev/mem`. Validate once that this firmware preserves DRAM
+         across warm reset. Plus panic beep/LED codes.
+      3. **The EFI GRUB menuentry route** (dual-boot, no media) is
+         proven to RUN but is blind until a **framebuffer console**
+         exists (MB2 framebuffer-request tag + font blit to the GOP
+         framebuffer). Build that if the firmware has no CSM — worth
+         having eventually regardless (post-CSM-era hardware).
       Success = the M5/MN self-tests green on screen and a hand-typed
       observer loop converging on 2008 silicon.
-      Later upgrade (only when live debugging earns it): ExpressCard
-      16550 + minimal PCI enumeration → serial console from the ASUS
-      (USB-serial dongle + null modem) → a gdb remote stub over that
-      link for true remote debugging. USB-to-USB is a dead end (both
+      Later upgrade (only when live debugging earns it): a gdb remote
+      stub — but with no UART on this machine it would ride the M13 NIC,
+      so it moves behind networking. USB-to-USB is a dead end (both
       machines are USB hosts; a bridge cable would need a full USB host
       stack in EigenOS).
 
