@@ -16,6 +16,8 @@
 #include "keyboard.h"
 #include "kheap.h"
 
+extern int eigs_run_demo(void);   /* src/hal.c — drives the runtime (SSE side) */
+
 #define VGA       ((volatile uint16_t *)0xB8000)
 #define VGA_COLS  80
 #define VGA_ROWS  25
@@ -275,9 +277,18 @@ void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
         serial_write("[m4] timer self-test: FAILED (no IRQ0)\n");
     }
 
-    put_at(16, 0, "M4 live: type keys -> echoed to COM1 (timer+kbd IRQs)", 0x0F);
-    serial_write("[m4] milestone-4 complete; entering idle loop.\n");
-    serial_write("[m4] keyboard echo (type in the QEMU window / sendkey):\n");
+    /* --- M5: run the EigenScript runtime freestanding on this kernel --- */
+    serial_write("[m5] booting EigenScript runtime (freestanding)...\n");
+    if (eigs_run_demo()) {
+        put_at(16, 0, "M5: EigenScript runs freestanding on EigenOS!", 0x0A);
+        serial_write("[m5] EigenScript running freestanding on EigenOS OK\n");
+    } else {
+        put_at(16, 0, "M5: EigenScript run FAILED (see COM1)", 0x4F);
+        serial_write("[m5] EigenScript run FAILED\n");
+    }
+
+    put_at(17, 0, "type keys -> echoed to COM1 (timer+kbd IRQs live)", 0x0F);
+    serial_write("[m4] entering idle loop; keyboard echo (type / sendkey):\n");
 
     /* Idle loop: hlt sleeps until the next interrupt (timer at 100 Hz or a
      * keypress); drain and echo any buffered keystrokes to serial + VGA. */

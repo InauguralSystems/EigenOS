@@ -11,7 +11,12 @@
 #include "paging.h"
 #include <stdint.h>
 
-#define HEAP_BASE  0xFFFFC80000000000ULL     /* distinct from KVMAP self-test */
+/* LOW-canonical (bit 47 = 0, < 2^48) on purpose: the EigenScript runtime
+ * NaN-boxes heap pointers by keeping only their low 48 bits, so malloc must
+ * return addresses that survive that truncation. A higher-half heap would
+ * come back non-canonical and #GP on the first deref. 16 TiB — clear of the
+ * identity map, the kernel image, and the direct/KVMAP higher-half regions. */
+#define HEAP_BASE  0x0000100000000000ULL
 #define PAGE_SIZE  4096ULL
 #define ALIGN      16ULL
 #define HDR        (sizeof(block))

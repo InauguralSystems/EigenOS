@@ -11,6 +11,26 @@ LDFLAGS := -ffreestanding -nostdlib -no-pie -Wl,-T,linker.ld -Wl,-z,noexecstack 
            -Wl,--build-id=none
 QEMU    := qemu-system-x86_64
 
+# --- EigenScript runtime, built freestanding into the kernel image (M5) ---
+# The sibling checkout; the runtime is compiled WITH SSE (it is all doubles)
+# and the freestanding profile, TLS forced to local-exec (statically linked,
+# so %fs:tpoff is a link-time constant — no __tls_get_addr).
+EIGS      := ../EigenScript
+RT_CFLAGS := -ffreestanding -nostdlib -m64 -mno-red-zone -msse -msse2 \
+             -fno-stack-protector -U_FORTIFY_SOURCE -ftls-model=local-exec \
+             -DEIGENSCRIPT_FREESTANDING=1 -DEIGENSCRIPT_EXT_HTTP=0 \
+             -DEIGENSCRIPT_EXT_MODEL=0 -DEIGENSCRIPT_EXT_DB=0 \
+             -O2 -I$(EIGS)/src -c
+MINI_CFLAGS := -fno-builtin -ffp-contract=off -fno-math-errno \
+               -DEIGS_MINI_STANDARD_NAMES=1
+
+EIGS_SRCS := eigenscript lexer parser builtins builtins_tensor hash arena \
+             state strbuf ext_store fmt lint chunk compiler vm jit trace eigs_embed
+EIGS_FS   := mini_libc mini_libm mini_fmt mini_strtod
+EIGS_OBJS := $(addprefix build/eigs_,$(addsuffix .o,$(EIGS_SRCS))) \
+             $(addprefix build/eigsfs_,$(addsuffix .o,$(EIGS_FS))) \
+             build/hal.o
+
 OBJS   := build/boot.o build/kernel.o build/pmm.o build/serial.o \
           build/idt.o build/isr.o build/paging.o build/pic.o \
           build/timer.o build/keyboard.o build/kheap.o
@@ -55,8 +75,20 @@ build/keyboard.o: src/keyboard.c src/keyboard.h src/io.h | build
 build/kheap.o: src/kheap.c src/kheap.h src/pmm.h src/paging.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
-$(KERNEL): $(OBJS) linker.ld
-	$(CC) $(LDFLAGS) -o $@ $(OBJS)
+# EigenScript runtime objects (freestanding + SSE).
+build/eigs_%.o: $(EIGS)/src/%.c | build
+	$(CC) $(RT_CFLAGS) $< -o $@
+
+build/eigsfs_%.o: $(EIGS)/src/freestanding/%.c | build
+	$(CC) $(RT_CFLAGS) $(MINI_CFLAGS) $< -o $@
+
+# The HAL glue: runtime cflags (SSE) so variadic FP + the double return
+# from eigs_value_as_num are handled; -Isrc for the kernel headers.
+build/hal.o: src/hal.c src/kheap.h src/serial.h src/timer.h | build
+	$(CC) $(RT_CFLAGS) -Isrc $< -o $@
+
+$(KERNEL): $(OBJS) $(EIGS_OBJS) linker.ld
+	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(EIGS_OBJS) -lgcc
 
 verify: $(KERNEL)
 	@grub-file --is-x86-multiboot2 $(KERNEL) && echo "OK: valid Multiboot2 kernel" \

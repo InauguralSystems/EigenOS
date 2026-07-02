@@ -29,7 +29,7 @@ mb2_end:
 .section .bss, "aw", @nobits
 .align 16
 stack_bottom:
-.skip 16384                                  # 16 KiB boot stack
+.skip 65536                                  # 64 KiB boot stack (runtime recursion)
 stack_top:
 
 .align 4096                                  # page tables (must be 4 KiB aligned)
@@ -105,6 +105,19 @@ long_mode_start:
     mov   %ax, %gs
     mov   %ax, %ss
     mov   $stack_top, %rsp
+
+    # Enable SSE: the EigenScript runtime is all doubles, and x86-64 passes
+    # them in xmm registers. The kernel core is -mno-sse, but the runtime
+    # objects are built -msse2, so turn the FPU/SSE units on here (once, for
+    # the whole machine). CR0: clear EM (bit2), set MP (bit1). CR4: set
+    # OSFXSR (bit9) + OSXMMEXCPT (bit10).
+    mov   %cr0, %rax
+    and   $~(1 << 2), %rax
+    or    $(1 << 1), %rax
+    mov   %rax, %cr0
+    mov   %cr4, %rax
+    or    $(3 << 9), %rax
+    mov   %rax, %cr4
 
     # SysV handoff: GRUB's Multiboot2 info pointer and magic become
     # kernel_main(info, magic). The 32-bit moves zero-extend into rdi/rsi;
