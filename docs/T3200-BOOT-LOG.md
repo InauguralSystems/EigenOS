@@ -50,3 +50,19 @@ matches), the sentinel test can proceed.
 
 **Firmware boot-menu / CSM check:** not yet done — held off until the
 crash-log validation is unblocked so we don't reboot the machine twice.
+
+## 2026-07-02 — dev-side response: crash-log ring moved to 0x4000000 (64 MiB)
+
+The blocker above is fixed on `main`. `0x8000000` (the suggestion) was
+rejected for a second collision: it is exactly the top of QEMU's default
+`-m 128M`, which would put the ring outside RAM in every default-memory
+QEMU gate run. `0x4000000` (64 MiB) dodges both: clear of
+`CONFIG_PHYSICAL_START`/KASLR's default base, inside QEMU's default RAM,
+inside the M-7317U's usable e820, and far above the kernel image.
+Changed: `src/crashlog.h` (address + collision notes), the PMM
+reservation follows the constant, `tools/t3200_read_crashlog.sh`, and
+the CLAUDE.md setup snippet (now `memmap=64K\$0x4000000`, plus the
+field-tested recovery procedure). Re-validated in QEMU: pmemsave at the
+new address, reader output byte-faithful vs the serial log; T3200 sim
+gate green. **Target side: re-run the one-time setup with the NEW
+address, then the sentinel test + the firmware CSM check.**
