@@ -42,3 +42,13 @@ void vga_putc(char c) {
 void vga_puts(const char *s) {
     for (; *s; s++) vga_putc(*s);
 }
+
+/* Fixed-row write that bypasses the scrolling cursor — for boot verdicts
+ * that must be VISIBLE on hardware with no serial (M7: the demo verdicts
+ * join kernel.c's status board rows instead of vanishing into COM1). */
+void vga_put_at(int row, int col, const char *s, uint8_t attr) {
+    if (row < 0 || row >= ROWS || col < 0) return;
+    int i = row * COLS + col;
+    for (; *s && i < (row + 1) * COLS; s++, i++)
+        VGA[i] = (uint16_t)(unsigned char)*s | ((uint16_t)attr << 8);
+}

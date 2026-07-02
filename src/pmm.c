@@ -14,6 +14,7 @@
  */
 #include "pmm.h"
 #include "multiboot2.h"
+#include "crashlog.h"
 
 #define PAGE_SIZE   4096ULL
 #define MAX_BYTES   (64ULL << 30)                /* 64 GiB build cap */
@@ -93,6 +94,9 @@ int pmm_init(uint32_t mb2_info) {
     /* Carve out what the map calls "available" but we occupy. */
     mark_used_range((uint64_t)_kernel_start, (uint64_t)_kernel_end);
     mark_used_range((uint64_t)mb2_info, (uint64_t)mb2_info + info->total_size);
+    /* The persistent-RAM crash log (crashlog.h): fixed physical ring the
+     * heap must never hand out — Linux reads it back post-crash. */
+    mark_used_range(CRASHLOG_PHYS, CRASHLOG_PHYS + CRASHLOG_SIZE);
     return 0;
 }
 

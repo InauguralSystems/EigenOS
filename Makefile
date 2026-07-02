@@ -33,7 +33,8 @@ EIGS_OBJS := $(addprefix build/eigs_,$(addsuffix .o,$(EIGS_SRCS))) \
 
 OBJS   := build/boot.o build/kernel.o build/pmm.o build/serial.o \
           build/idt.o build/isr.o build/paging.o build/pic.o \
-          build/timer.o build/keyboard.o build/kheap.o build/vga.o
+          build/timer.o build/keyboard.o build/kheap.o build/vga.o \
+          build/crashlog.o
 KERNEL := build/EigenOS.elf
 ISO    := build/EigenOS.iso
 
@@ -45,16 +46,16 @@ build:
 build/boot.o: src/boot.S | build
 	$(CC) -m64 -c $< -o $@
 
-build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h src/paging.h src/pic.h src/timer.h src/keyboard.h src/kheap.h src/stackguard.h | build
+build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h src/paging.h src/pic.h src/timer.h src/keyboard.h src/kheap.h src/stackguard.h src/crashlog.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
-build/pmm.o: src/pmm.c src/pmm.h src/multiboot2.h | build
+build/pmm.o: src/pmm.c src/pmm.h src/multiboot2.h src/crashlog.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
-build/serial.o: src/serial.c src/serial.h src/io.h | build
+build/serial.o: src/serial.c src/serial.h src/io.h src/crashlog.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
-build/idt.o: src/idt.c src/idt.h src/serial.h src/pic.h src/timer.h src/keyboard.h | build
+build/idt.o: src/idt.c src/idt.h src/serial.h src/pic.h src/timer.h src/keyboard.h src/vga.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/isr.o: src/isr.S | build
@@ -76,6 +77,9 @@ build/kheap.o: src/kheap.c src/kheap.h src/pmm.h src/paging.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/vga.o: src/vga.c src/vga.h | build
+	$(CC) $(CFLAGS) $< -o $@
+
+build/crashlog.o: src/crashlog.c src/crashlog.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 # EigenScript runtime objects (freestanding + SSE).

@@ -4,6 +4,7 @@
 #include "pic.h"
 #include "timer.h"
 #include "keyboard.h"
+#include "vga.h"
 
 struct idt_entry {
     uint16_t off_low;
@@ -94,6 +95,10 @@ void isr_dispatch(interrupt_frame *f) {
     serial_write(" rflags=0x");
     serial_write_hex64(f->rflags);
     serial_write("\n");
+    /* Also render to VGA (the T3200 has no serial) + 2 panic beeps (works
+     * even with the screen dead). The full frame is in the RAM crash log. */
+    vga_put_at(24, 0, "FATAL CPU EXCEPTION - see crash log (2 beeps)", 0x4F);
+    speaker_beeps(2);
     for (;;) __asm__ volatile ("cli; hlt");
 }
 

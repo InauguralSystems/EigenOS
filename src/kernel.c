@@ -16,6 +16,7 @@
 #include "keyboard.h"
 #include "kheap.h"
 #include "stackguard.h"
+#include "crashlog.h"
 
 extern int  eigs_run_demo(void);  /* src/hal.c — drives the runtime (SSE side) */
 extern void eigs_repl(void);      /* src/hal.c — interactive REPL, never returns */
@@ -158,6 +159,11 @@ static int kheap_selftest(void) {
  * the canary paint below.) */
 
 void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
+    /* First instruction's worth of work: claim the persistent-RAM crash
+     * log so every serial byte from here on survives a warm reboot (the
+     * T3200 has no serial port; the resident Linux reads this back via
+     * /dev/mem — tools/t3200_read_crashlog.sh). */
+    crashlog_init();
     /* Zero the unused stack up to (just below) our own frame, then paint a
      * canary strip at stack_bottom. There is no guard page on bare metal, so
      * a stack overflow silently corrupts whatever the linker placed below

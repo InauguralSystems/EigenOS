@@ -114,14 +114,36 @@ sudo update-grub    # also set GRUB_TIMEOUT_STYLE=menu, GRUB_TIMEOUT=5
 (`/boot` is not a separate partition here, so the GRUB path really is
 `/boot/EigenOS.elf`.)
 
+### One-time Linux setup for the crash log (do BEFORE the first attempt)
+
+EigenOS mirrors every log byte into a persistent-RAM ring at phys
+`0x1000000` (64 KiB, survives warm reset). For Linux to read it back after
+a hang, add to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`:
+
+```
+memmap=64K\$0x1000000 iomem=relaxed
+```
+
+The `\$` is REQUIRED (grub eats a bare `$`). Then `sudo update-grub`,
+reboot, and verify `cat /proc/cmdline` shows `memmap=64K$0x1000000`.
+`memmap` keeps Linux out of the buffer; `iomem=relaxed` unblocks /dev/mem
+(Ubuntu ships STRICT_DEVMEM).
+
 ### After a boot attempt
 
-Record what happened (photo-transcribe the screen if needed) in
-`docs/T3200-BOOT-LOG.md` and push: which `[mN]` verdicts printed, where it
-stopped if it stopped, what a typed `6 * 7` did. If EigenOS hung: warm-
-reboot into Linux — once the persistent-RAM crash log lands (M7 prep item,
-NOT yet implemented) the log is read back here via /dev/mem; until then the
-screen is the only report.
+Record what happened in `docs/T3200-BOOT-LOG.md` and push: which verdicts
+showed on screen (the `[mN]` board rows + the MN rows 17–19), where it
+stopped if it stopped, what a typed `6 * 7` did, and any beeps (2 = fatal
+CPU exception, 3 = stack-canary panic). If EigenOS hung or the screen was
+dead: warm-reboot into Linux and run
+
+```
+sudo tools/t3200_read_crashlog.sh
+```
+
+— it prints the full boot log back out of RAM (validated in QEMU:
+byte-faithful vs the serial log). Note: booting EigenOS again overwrites
+the previous log; read it from Linux first.
 
 ### The iteration loop once booted
 

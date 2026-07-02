@@ -1,6 +1,7 @@
 /* COM1 16550 UART driver (milestone-1). */
 #include "serial.h"
 #include "io.h"
+#include "crashlog.h"
 
 #define COM1 0x3F8
 
@@ -35,6 +36,7 @@ int serial_selftest(void) {
 static int transmit_empty(void) { return inb(COM1 + 5) & 0x20; }
 
 void serial_putc(char c) {
+    crashlog_putc(c);            /* mirror every log byte to persistent RAM */
     if (c == '\n') {
         while (!transmit_empty()) { }
         outb(COM1, '\r');

@@ -195,6 +195,8 @@ int eigs_run_demo(void) {
     if (v3) eigs_value_release(v3);
     serial_write(def_ok ? "[mn] eval 3 (define + call) = 144 OK\n"
                         : "[mn] eval 3 (define + call) FAILED\n");
+    vga_put_at(17, 0, def_ok ? "MN: define + call = 144 OK"
+                             : "MN: define + call FAILED", def_ok ? 0x0A : 0x4F);
     if (!def_ok) return 0;
 
     EigsValue *v4 = eigs_eval_string(
@@ -207,13 +209,17 @@ int eigs_run_demo(void) {
     if (v4) eigs_value_release(v4);
     serial_write(obs_ok ? "[mn] eval 4 (observer loop) converged OK\n"
                         : "[mn] eval 4 (observer loop) FAILED\n");
+    vga_put_at(18, 0, obs_ok ? "MN: observer loop converged OK"
+                             : "MN: observer loop FAILED", obs_ok ? 0x0A : 0x4F);
     if (!obs_ok) return 0;
 
     if (!stack_canary_ok()) {
         serial_write("[mn] PANIC: boot-stack canary trampled during demo\n");
+        vga_put_at(19, 0, "MN: STACK CANARY TRAMPLED", 0x4F);
         return 0;
     }
     serial_write("[mn] stack canary intact after 4 evals OK\n");
+    vga_put_at(19, 0, "MN: stack canary intact OK", 0x0A);
     return 1;
 }
 
@@ -264,6 +270,7 @@ static void repl_eval(const char *src) {
     if (!stack_canary_ok()) {
         con_write("PANIC: boot-stack overflow (canary trampled by that "
                   "eval). Halting.\n");
+        speaker_beeps(3);            /* 3 beeps = canary (2 = CPU exception) */
         for (;;) __asm__ volatile ("cli; hlt");
     }
 }

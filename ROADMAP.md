@@ -111,11 +111,19 @@ upstream, never worked around.
          everything works as designed. `make usb USB=/dev/sdX`. This is
          the primary attempt; also check the firmware setup screen for a
          "Legacy"/"CSM" toggle while there.
-      2. **Persistent-RAM crash log** (still the pre-attempt build item):
-         EigenOS logs to a reserved physical buffer with a magic header;
-         after a hang, warm-reboot into Linux and read it back via
-         `/dev/mem`. Validate once that this firmware preserves DRAM
-         across warm reset. Plus panic beep/LED codes.
+      2. **Persistent-RAM crash log — DONE (dev side, 2026-07-02).**
+         Every serial byte mirrors into a 64 KiB ring at phys `0x1000000`
+         (`src/crashlog.c`; PMM-reserved; claimed first thing in
+         kernel_main). Linux reads it back via
+         `tools/t3200_read_crashlog.sh` (needs the one-time
+         `memmap=64K\$0x1000000 iomem=relaxed` cmdline — see CLAUDE.md).
+         Validated in QEMU: `pmemsave` dump parsed by the same script is
+         byte-faithful vs the serial log. Also landed: fatal exceptions
+         + canary panics now render to VGA and sound beep codes (2 =
+         CPU exception, 3 = canary), and the MN demo verdicts write to
+         VGA rows 17–19 (they were serial-only — invisible on a machine
+         with no serial). Remaining on-target validation: that this
+         firmware preserves DRAM across a warm reset.
       3. **The EFI GRUB menuentry route** (dual-boot, no media) is
          proven to RUN but is blind until a **framebuffer console**
          exists (MB2 framebuffer-request tag + font blit to the GOP
