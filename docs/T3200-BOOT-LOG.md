@@ -66,3 +66,48 @@ field-tested recovery procedure). Re-validated in QEMU: pmemsave at the
 new address, reader output byte-faithful vs the serial log; T3200 sim
 gate green. **Target side: re-run the one-time setup with the NEW
 address, then the sentinel test + the firmware CSM check.**
+
+## 2026-07-02 — target retry at 0x4000000: ALSO fails (decompressor hang)
+
+Applied the new address on the target (cmdline verified
+`memmap=64K\$0x4000000 iomem=relaxed`, escaping preserved, update-grub
+clean). Same failure signature as `0x1000000`:
+
+- Screen prints `Physical KASLR disabled: no suitable memory region!`,
+  then **solid black forever** — sat 15 minutes, no further output, no
+  panic banner, no reboot loop, hard-reset required.
+- Recovery entry still boots (recovery uses `GRUB_CMDLINE_LINUX`, not
+  `_DEFAULT`, so memmap is inactive there; same as before).
+- Field-tested recovery procedure used again to revert to
+  `"quiet splash"`; target is back on a clean cmdline.
+
+**Diagnosis (best guess):** the KASLR "no suitable region" line is a
+red herring — the fatal event is the kernel **decompressor hanging**
+after KASLR gives up and falls back to the default load address. On
+Ubuntu 24.04 (kernel 6.8.0-124), the decompressed image plus early boot
+regions likely span well past `0x4000000` starting from
+`CONFIG_PHYSICAL_START=0x1000000`. Reserving 64 KiB at 64 MiB lands
+inside the decompressor's target zone, and either it can't relocate
+around the hole or it partially writes into it. Boot dies silently
+right at the jump into the decompressed kernel — before init, before
+any userspace, before anything hits the journal (confirmed:
+`journalctl -b -1` shows the *previous* clean shutdown, not this
+attempt — the failed boot never wrote anything).
+
+**Blocker for the dev side:** the crash-log ring needs to live **well
+above the whole decompressed kernel image + initrd** on this hardware,
+not just above `CONFIG_PHYSICAL_START`. Candidates that clear both:
+
+- `0x10000000` (256 MiB) — probably safe on all sane Ubuntu installs.
+- `0x40000000` (1 GiB) — definitely safe on this 3.8 GiB machine, still
+  well inside `-m 3840` QEMU gate. Cheapest to justify.
+- Above 4 GiB (`0x100000000+`) — cleanest / no collision possible, but
+  needs Multiboot2 to hand a 64-bit address in the memory map and
+  early-boot to use 64-bit addressing before the direct map is up.
+  Probably overkill for M7.
+
+Recommend `0x40000000`. Retry once the address moves in `src/crashlog.h`
++ playbook + reader script.
+
+Firmware boot-menu / CSM check still deferred (same reasoning as before —
+avoid double reboots while the crash-log path is unblocked).
