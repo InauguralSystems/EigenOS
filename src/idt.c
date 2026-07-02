@@ -1,6 +1,9 @@
 /* IDT setup + C-side exception dispatch (milestone-1). */
 #include "idt.h"
 #include "serial.h"
+#include "pic.h"
+#include "timer.h"
+#include "keyboard.h"
 
 struct idt_entry {
     uint16_t off_low;
@@ -20,7 +23,7 @@ struct idt_ptr {
 static struct idt_entry g_idt[256];
 static struct idt_ptr   g_idtp;
 
-extern void *isr_stub_table[32];   /* from isr.S */
+extern void *isr_stub_table[48];   /* from isr.S: 32 exceptions + 16 IRQs */
 
 #define KERNEL_CS 0x08             /* GDT code selector (boot.S) */
 
@@ -54,6 +57,17 @@ static const char *exc_name(uint64_t v) {
 
 /* Called from isr_common with a pointer to the saved frame. */
 void isr_dispatch(interrupt_frame *f) {
+    /* Hardware IRQs (PIC remapped to 32-47 in M4): service and EOI, no
+     * halt. Interrupts stay off for the handler (interrupt gate) and are
+     * re-enabled by iretq restoring RFLAGS. */
+    if (f->vector >= 32 && f->vector <= 47) {
+        int irq = (int)(f->vector - 32);
+        if (irq == 0)      timer_irq();
+        else if (irq == 1) kbd_irq();
+        pic_eoi(irq);
+        return;
+    }
+
     g_exceptions++;
 
     if (f->vector == 3) {
@@ -84,7 +98,7 @@ void isr_dispatch(interrupt_frame *f) {
 }
 
 void idt_init(void) {
-    for (int i = 0; i < 32; i++) set_gate(i, isr_stub_table[i]);
+    for (int i = 0; i < 48; i++) set_gate(i, isr_stub_table[i]);
     g_idtp.limit = (uint16_t)(sizeof(g_idt) - 1);
     g_idtp.base  = (uint64_t)&g_idt[0];
     __asm__ volatile ("lidt %0" :: "m"(g_idtp));

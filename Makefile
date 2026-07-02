@@ -12,7 +12,8 @@ LDFLAGS := -ffreestanding -nostdlib -no-pie -Wl,-T,linker.ld -Wl,-z,noexecstack 
 QEMU    := qemu-system-x86_64
 
 OBJS   := build/boot.o build/kernel.o build/pmm.o build/serial.o \
-          build/idt.o build/isr.o build/paging.o
+          build/idt.o build/isr.o build/paging.o build/pic.o \
+          build/timer.o build/keyboard.o
 KERNEL := build/EigenOS.elf
 ISO    := build/EigenOS.iso
 
@@ -24,7 +25,7 @@ build:
 build/boot.o: src/boot.S | build
 	$(CC) -m64 -c $< -o $@
 
-build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h src/paging.h | build
+build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h src/paging.h src/pic.h src/timer.h src/keyboard.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/pmm.o: src/pmm.c src/pmm.h src/multiboot2.h | build
@@ -33,13 +34,22 @@ build/pmm.o: src/pmm.c src/pmm.h src/multiboot2.h | build
 build/serial.o: src/serial.c src/serial.h src/io.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
-build/idt.o: src/idt.c src/idt.h src/serial.h | build
+build/idt.o: src/idt.c src/idt.h src/serial.h src/pic.h src/timer.h src/keyboard.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/isr.o: src/isr.S | build
 	$(CC) -m64 -c $< -o $@
 
 build/paging.o: src/paging.c src/paging.h src/pmm.h | build
+	$(CC) $(CFLAGS) $< -o $@
+
+build/pic.o: src/pic.c src/pic.h src/io.h | build
+	$(CC) $(CFLAGS) $< -o $@
+
+build/timer.o: src/timer.c src/timer.h src/io.h | build
+	$(CC) $(CFLAGS) $< -o $@
+
+build/keyboard.o: src/keyboard.c src/keyboard.h src/io.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 $(KERNEL): $(OBJS) linker.ld

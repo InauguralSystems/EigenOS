@@ -21,6 +21,18 @@ first 1 GiB with 2 MiB pages, PAE + LME + paging, 64-bit GDT), then `kernel_main
 runs in long mode and writes to VGA text memory. The stub hands the Multiboot2
 info pointer (and magic) to `kernel_main`. Verified booting under QEMU.
 
+**Milestone-4 (done):** hardware interrupts — PIT timer + PS/2 keyboard.
+The 8259 PIC is remapped off the exception vectors to 32-47 (`src/pic.c`),
+the IDT gains IRQ gates, and `sti` turns interrupts on. The PIT
+(`src/timer.c`) drives IRQ0 at 100 Hz into a monotonic tick counter (the
+`clock` HAL root); a PS/2 keyboard driver (`src/keyboard.c`) turns IRQ1
+scancodes into ASCII in a ring buffer (the `read_char` HAL root). These
+are the last two HAL roots the freestanding runtime needs (M5). Proven
+on boot: a timer self-test requires ticks to advance on their own, and
+the kernel then echoes typed keys to serial — verified end-to-end by
+injecting keystrokes through the QEMU monitor and reading them back off
+COM1.
+
 **Milestone-3 (done):** virtual memory. `paging_init` (`src/paging.c`)
 builds fresh 4-level page tables — a low-1 GiB identity map so the
 running kernel survives the `CR3` load, plus a **higher-half direct map
@@ -85,7 +97,7 @@ rejects ELF64, so GRUB does the loading.
 - [x] **M1** — IDT + CPU exception handlers, serial (COM1) for headless logging
 - [x] **M2** — physical memory manager (parse the multiboot memory map)
 - [x] **M3** — paging/virtual memory + higher-half direct map
-- [ ] **M4** — PS/2 keyboard, PIT timer
+- [x] **M4** — PS/2 keyboard, PIT timer (the read_char + clock HAL roots)
 - [ ] **M5** — port the EigenScript runtime to freestanding (the forcing function).
   Scoped by the [freestanding dependency ledger](https://github.com/InauguralSystems/EigenScript/blob/main/docs/FREESTANDING.md):
   ~10 root primitives to implement against this kernel's HAL, the rest a

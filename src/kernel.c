@@ -11,6 +11,9 @@
 #include "serial.h"
 #include "idt.h"
 #include "paging.h"
+#include "pic.h"
+#include "timer.h"
+#include "keyboard.h"
 
 #define VGA       ((volatile uint16_t *)0xB8000)
 #define VGA_COLS  80
@@ -111,7 +114,7 @@ void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
     clear(0x07);
     put_at(0, 0, "EigenOS", 0x0F);
     put_at(0, 8, "// bare metal, x86-64 long mode", 0x07);
-    put_at(2, 0, "M3: paging+VMM | M2: PMM | M1: IDT+serial | M0: long mode", 0x08);
+    put_at(2, 0, "M4: PIC+PIT+PS/2 | M3: paging | M2: PMM | M1: IDT+serial | M0: longmode", 0x08);
 
     /* --- serial first: the headless log for everything below --- */
     serial_init();
@@ -197,9 +200,46 @@ void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
         serial_write("[m3] paging self-test: FAILED\n");
     }
 
-    put_at(15, 0, "M3 complete. halted.", 0x0F);
-    serial_write("[m3] milestone-3 complete; halting.\n");
+    /* --- M4: hardware interrupts (PIC + PIT timer + PS/2 keyboard) --- */
+    pic_init((1u << 0) | (1u << 1));              /* remap; unmask IRQ0+IRQ1 */
+    timer_init(100);
+    keyboard_init();
+    __asm__ volatile ("sti");
+    serial_write("[m4] PIC remapped 32-47, PIT ");
+    serial_write_dec(timer_hz());
+    serial_write(" Hz, keyboard armed, interrupts ON\n");
 
-    for (;;)
+    /* Timer self-test: with IRQs live, ticks must advance on their own.
+     * Bounded busy-wait so a dead timer FAILS rather than hangs. */
+    uint64_t t0 = timer_ticks();
+    uint64_t guard = 0;
+    while (timer_ticks() < t0 + 3 && guard < 2000000000ULL) guard++;
+    int timer_ok = timer_ticks() >= t0 + 3;
+    if (timer_ok) {
+        put_at(15, 0, "timer: IRQ0 ticks advancing OK", 0x0A);
+        serial_write("[m4] timer self-test: ticks advanced to ");
+        serial_write_dec(timer_ticks());
+        serial_write(" (IRQ0 firing) OK\n");
+    } else {
+        put_at(15, 0, "timer: IRQ0 NOT firing FAILED", 0x4F);
+        serial_write("[m4] timer self-test: FAILED (no IRQ0)\n");
+    }
+
+    put_at(16, 0, "M4 live: type keys -> echoed to COM1 (timer+kbd IRQs)", 0x0F);
+    serial_write("[m4] milestone-4 complete; entering idle loop.\n");
+    serial_write("[m4] keyboard echo (type in the QEMU window / sendkey):\n");
+
+    /* Idle loop: hlt sleeps until the next interrupt (timer at 100 Hz or a
+     * keypress); drain and echo any buffered keystrokes to serial + VGA. */
+    int kcol = 0;
+    for (;;) {
+        int c = kbd_getchar();
+        if (c >= 0) {
+            serial_putc((char)c);
+            if (c == '\n') { kcol = 0; }
+            else if (c == '\b') { if (kcol > 0) kcol--; put_at(18, kcol, " ", 0x0E); }
+            else if (kcol < VGA_COLS) { put_at(18, kcol++, (char[]){(char)c, 0}, 0x0E); }
+        }
         __asm__ volatile ("hlt");
+    }
 }
