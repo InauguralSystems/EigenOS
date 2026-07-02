@@ -1,12 +1,24 @@
 # EigenOS
 
-A bare-metal x86-64 operating system. The north star: run the
-[EigenScript](https://github.com/InauguralSystems/EigenScript) runtime
-**freestanding** — no host OS, no libc underneath it — where the kernel brings
-up just enough hardware (memory, screen, keyboard, timer) and EigenScript is the
-shell, userland, and everything else. It's the bare-metal counterpart to
-"EigenScript is a single zero-dependency C binary," and a forcing function for
-every hidden libc/syscall dependency in the runtime — surveyed in EigenScript's
+A bare-metal x86-64 operating system whose shell, userland, and everything
+else is [EigenScript](https://github.com/InauguralSystems/EigenScript). The
+original north star — run the EigenScript runtime **freestanding**, no host
+OS, no libc underneath it — was reached at M5, and the machine now boots
+straight into an interactive EigenScript REPL (MN).
+
+Like the language, the OS is **niche but general**: general purpose defines
+the checklist (storage, multitasking, time, devices), the observer niche
+defines how each item is answered — machine vitals as observed bindings, a
+scheduler written as an observer loop, a crash-recoverable log as the
+filesystem, the trace tape as a replayable system journal. Not POSIX
+imitation. The full arc and its operating principles are in
+[ROADMAP.md](ROADMAP.md).
+
+Throughout, EigenOS is a **forcing function on the language** — each
+subsystem stresses EigenScript on an axis no hosted repo can reach (it has
+already surfaced the NaN-box low-canonical-malloc coupling and the compiler's
+12.7 KiB-per-AST-level stack frame, both invisible to every hosted gate).
+The runtime's external surface is surveyed in EigenScript's
 [freestanding dependency ledger](https://github.com/InauguralSystems/EigenScript/blob/main/docs/FREESTANDING.md).
 
 **Target hardware:** the Pentium Dual-Core T3200 (Penryn, x86-64) — the 2008
@@ -14,6 +26,23 @@ laptop freed from dev-baseline duty when development moved to the ASUS X540NA.
 Developed and tested under QEMU first.
 
 ## Status
+
+**Milestone-N (done): the interactive REPL.** The machine boots into an
+EigenScript REPL — PS/2 keyboard in, VGA text console + serial out, one open
+runtime so state persists across lines, value echo, error reporting
+(`src/hal.c`, `src/vga.c`). The layout-sensitive `#UD` heisenbug that first
+blocked it turned out to be a **boot-stack overflow**, not a runtime memory
+bug: the EigenScript compiler cost ~12.7 KiB of C stack per AST level (fixed
+upstream, [EigenScript PR #361](https://github.com/InauguralSystems/EigenScript/pull/361));
+the boot stack is now 1 MiB and a canary strip at `stack_bottom`
+(`src/stackguard.h`) is checked after every eval, so a future overflow
+panics at the eval that caused it instead of trampling `.bss` silently.
+Full post-mortem in [KNOWN_ISSUES.md](KNOWN_ISSUES.md). On-boot regression:
+the three former tripwires (a third eval, `define` + call, an observer
+loop) run at every boot, then assert the canary. Pre-hardware gates all
+green in QEMU: boots under `-cpu core2duo -m 3840 -smp 2` (the T3200's
+feature set and RAM — no post-Merom instructions in the image), and the
+ISO is isohybrid and boots as a raw disk (the USB path).
 
 **Milestone-0 (done, boots):** GRUB (Multiboot2) loads the ELF64 kernel; the
 boot stub transitions 32-bit protected mode → 64-bit long mode (identity-mapped
@@ -116,7 +145,27 @@ rejects ELF64, so GRUB does the loading.
     bits, so `malloc` must return **low-canonical** addresses — the kernel
     heap lives at `0x0000100000000000`, not the higher half, or the first
     pointer deref is a non-canonical `#GP`.
-- [ ] **MN** — boot straight into an EigenScript REPL on the T3200
+- [x] **MN** — boot straight into an interactive EigenScript REPL (see
+  Status above; the T3200 hardware boot itself is M7)
+
+**Next** (the niche-but-general arc — full detail and rationale in
+[ROADMAP.md](ROADMAP.md)):
+
+- [ ] **M6** — a REPL you can actually type into: shifted-symbol keymap
+  (`* + " ( ) [ ]` are untypable today), multi-line `define`/loop input,
+  `gfxpayload=text`, `make usb`
+- [ ] **M7** — boot the T3200 (USB stick; VGA + keyboard, no serial)
+- [ ] **M8** — machine vitals as observed bindings
+  (`converged of heap_pressure` as a kernel-policy primitive)
+- [ ] **M9** — multitasking: task = `EigsState`, the scheduler as an
+  observer loop (forces the runtime's real scheduler/concurrency story)
+- [ ] **M10** — storage: tidelog-style crash-recoverable log as the
+  filesystem, over an ATA driver
+- [ ] **M11** — the system journal: trace tape over machine state;
+  `prev of` / `state_at` against the computer itself; recovery = replay
+- [ ] **M12** — devices as `.eigs` drivers (port I/O, MMIO, IRQ callbacks
+  from the language)
+- [ ] **M13** — networking (deliberately last)
 
 ## License
 
