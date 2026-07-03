@@ -1,0 +1,96 @@
+# Conway's Game of Life — the EigenOS ROM-bundle demo.
+# A glider crosses a toroidal grid; runs a fixed number of generations
+# and reports how the live-cell count behaves under the observer.
+# Pure EigenScript, no filesystem, no imports — runs anywhere the
+# runtime runs, including bare metal via `import life`.
+
+W is 24
+H is 12
+GENS is 16
+
+# Flat grid of 0/1, row-major.
+define fresh_grid(w, h) as:
+    local g is []
+    local n is w * h
+    local i is 0
+    loop while i < n:
+        append of [g, 0]
+        i is i + 1
+    return g
+
+define wrap(v, m) as:
+    local r is v
+    loop while r < 0:
+        r is r + m
+    loop while r >= m:
+        r is r - m
+    return r
+
+define cell(g, x, y, w, h) as:
+    return g[(wrap of [y, h]) * w + (wrap of [x, w])]
+
+define neighbors(g, x, y, w, h) as:
+    local n is 0
+    for dy in [-1, 0, 1]:
+        for dx in [-1, 0, 1]:
+            if not (dx == 0 and dy == 0):
+                n is n + (cell of [g, x + dx, y + dy, w, h])
+    return n
+
+define step_grid(g, w, h) as:
+    local out is fresh_grid of [w, h]
+    local y is 0
+    loop while y < h:
+        local x is 0
+        loop while x < w:
+            local nb is neighbors of [g, x, y, w, h]
+            local alive is g[y * w + x]
+            local nxt is 0
+            if alive == 1 and (nb == 2 or nb == 3):
+                nxt is 1
+            if alive == 0 and nb == 3:
+                nxt is 1
+            out[y * w + x] is nxt
+            x is x + 1
+        y is y + 1
+    return out
+
+define render(g, w, h) as:
+    local y is 0
+    loop while y < h:
+        local row is ""
+        local x is 0
+        loop while x < w:
+            if g[y * w + x] == 1:
+                row is row + "#"
+            else:
+                row is row + "."
+            x is x + 1
+        print of row
+        y is y + 1
+
+define live_count(g) as:
+    local n is 0
+    for c in g:
+        n is n + c
+    return n
+
+# Seed: a glider.
+grid is fresh_grid of [W, H]
+grid[1 * W + 2] is 1
+grid[2 * W + 3] is 1
+grid[3 * W + 1] is 1
+grid[3 * W + 2] is 1
+grid[3 * W + 3] is 1
+
+gen is 0
+pop is 5.0
+loop while gen < GENS:
+    print of ("gen " + (str of gen) + "  live " + (str of (live_count of grid)))
+    render of [grid, W, H]
+    grid is step_grid of [grid, W, H]
+    pop is 0.0 + (live_count of grid)
+    gen is gen + 1
+
+print of ("done: " + (str of GENS) + " generations, population " + (str of (live_count of grid)))
+report of pop

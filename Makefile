@@ -38,7 +38,12 @@ EIGS_OBJS := $(addprefix build/eigs_,$(addsuffix .o,$(EIGS_SRCS))) \
 OBJS   := build/boot.o build/kernel.o build/pmm.o build/serial.o \
           build/idt.o build/isr.o build/paging.o build/pic.o \
           build/timer.o build/keyboard.o build/kheap.o build/vga.o \
-          build/crashlog.o
+          build/crashlog.o build/bundle.o
+
+# The ROM bundle (M7.5): the EigenScript stdlib + demos/ baked into the
+# image, served via the eigs_set_source_provider seam — `import` on bare
+# metal with no filesystem. Regenerates when any source or the tool moves.
+BUNDLE_SRCS := $(wildcard $(EIGS)/lib/*.eigs) $(wildcard demos/*.eigs)
 KERNEL := build/EigenOS.elf
 ISO    := build/EigenOS.iso
 
@@ -84,6 +89,12 @@ build/vga.o: src/vga.c src/vga.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/crashlog.o: src/crashlog.c src/crashlog.h | build
+	$(CC) $(CFLAGS) $< -o $@
+
+build/bundle.c: tools/mkbundle.py $(BUNDLE_SRCS) | build
+	python3 tools/mkbundle.py $@ $(BUNDLE_SRCS)
+
+build/bundle.o: build/bundle.c
 	$(CC) $(CFLAGS) $< -o $@
 
 # EigenScript runtime objects (freestanding + SSE).

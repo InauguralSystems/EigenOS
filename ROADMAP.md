@@ -125,19 +125,23 @@ upstream, never worked around.
       machines are USB hosts; a bridge cable would need a full USB host
       stack in EigenOS).
 
-- [ ] **M7.5 — the machine has software.** The freestanding profile
-      carves out `load_file`/`import`, so the bare-metal REPL has no
-      stdlib and can run nothing it didn't just type. Fix: a **ROM
-      bundle** — embed `lib/*.eigs` + chosen portfolio programs in the
-      kernel image at build time and resolve `import` from it (the
-      Lisp-machine answer: the image IS the software). Upstream forcing
-      yield: the freestanding profile needs a pluggable **source-provider
-      seam** in the embed API ("give me the text of module X" without a
-      filesystem) — a clean primitive EigenScript lacks; M10's real
-      filesystem later re-backs the same seam, so nothing is throwaway.
-      Demo: `import list` at the bare-metal REPL; **dynamics' `life.eigs`
-      running on the VGA console** — real software, written elsewhere,
-      running on the machine.
+- [x] **M7.5 — the machine has software (DONE 2026-07-03).** The
+      upstream **source-provider seam** landed (EigenScript PR #362:
+      `eigs_set_source_provider` — `import` consults the provider first
+      in every profile; the only module source freestanding; M10's real
+      filesystem later re-backs the same seam). EigenOS side: the **ROM
+      bundle** — `tools/mkbundle.py` bakes the entire EigenScript stdlib
+      (67 modules) + `demos/life.eigs` (~505 KiB of source) into the
+      image as `.rodata` byte arrays; `hal.c` registers the bundle as
+      the provider at eigs_open. Boot self-test: `import math` →
+      `abs(-7)=7` verdict on VGA row 20. Verified in QEMU via sendkey:
+      `import math`, `math.abs of -7` → 7, and **`import life` runs
+      Conway's Game of Life on the console** — a glider crossing a
+      toroidal grid, observer report on the population — real software
+      on a machine with no filesystem. core2duo/3840 gate green.
+      (Also fixed upstream: build.sh had drifted from the Makefile —
+      missing eigs_embed.c — the known drift trap, caught by the matrix
+      CI jobs.)
 
 ## Phase 3 — the self-observing computer
 

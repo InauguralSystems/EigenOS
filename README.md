@@ -158,6 +158,11 @@ rejects ELF64, so GRUB does the loading.
   typed observer loop→converged.
 - [ ] **M7** — boot the T3200 (dual-boot via its resident Linux's GRUB;
   VGA + keyboard, no serial)
+- [x] **M7.5** — the machine has software: the EigenScript stdlib (67
+  modules) + demos baked into the image as a ROM bundle, served through
+  the upstream source-provider seam (EigenScript PR #362) — `import
+  math` works and `import life` runs Conway's Life at the bare-metal
+  REPL, no filesystem anywhere.
 - [ ] **M8** — machine vitals as observed bindings
   (`converged of heap_pressure` as a kernel-policy primitive)
 - [ ] **M9** — multitasking: task = `EigsState`, the scheduler as an
