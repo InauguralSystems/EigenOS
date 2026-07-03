@@ -307,13 +307,14 @@ static void register_tasks(void) {
 
 /* ---- M10: the block device, EigenScript-visible ----
  * Mechanism in ata.c; POLICY lives up here and in script. Sectors
- * travel as lists of 512 byte numbers — the embed API has no buffer
- * surface yet (that is phase 2's upstream ask; tidelog's data path is
- * buffer-based). blk_write REFUSES until blk_unlock has been called
- * once this boot: on the T3200 the primary disk carries the Linux
- * install, so a fat-fingered REPL line must not be able to write.
- * Nothing in the kernel ever unlocks by itself; the store's mount
- * code does, after verifying the tidelog magic. */
+ * travel as BUFFERS of 512 byte values (upstream PR #364 added the
+ * buffer embed API for exactly this seam) — NUL-safe, no copy at the
+ * value boundary, and the same shape tidelog's store I/O speaks.
+ * blk_write REFUSES until blk_unlock has been called once this boot:
+ * on the T3200 the primary disk carries the Linux install, so a
+ * fat-fingered REPL line must not be able to write. Nothing in the
+ * kernel ever unlocks by itself; the store's mount code does, after
+ * verifying the tidelog magic. */
 static double list_num(EigsValue *l, int i);      /* defined below (M9.5) */
 static int arg_list_min(EigsValue *a, int n);
 static int g_blk_unlocked;
@@ -340,22 +341,19 @@ static EigsValue *b_blk_unlock(EigsValue *a) {
     return eigs_value_new_num(1);
 }
 
-static EigsValue *b_blk_read(EigsValue *a) {   /* lba -> 512 nums | null */
+static EigsValue *b_blk_read(EigsValue *a) {   /* lba -> buffer[512] | null */
     if (!a || eigs_value_type(a) != EIGS_TYPE_NUM) return eigs_value_new_null();
     double d = eigs_value_as_num(a);
     if (d < 0) return eigs_value_new_null();
     uint8_t buf[512];
     if (!ata_read((uint64_t)d, buf)) return eigs_value_new_null();
-    EigsValue *l = eigs_value_new_list(512);
-    for (int i = 0; i < 512; i++) {
-        EigsValue *n = eigs_value_new_num((double)buf[i]);
-        eigs_value_list_append(l, n);
-        eigs_value_release(n);
-    }
-    return l;
+    EigsValue *bv = eigs_value_new_buffer(512);
+    for (int i = 0; i < 512; i++)
+        eigs_value_buffer_set(bv, i, (double)buf[i]);
+    return bv;
 }
 
-static EigsValue *b_blk_write(EigsValue *a) {  /* [lba, 512 nums] -> 1|0 */
+static EigsValue *b_blk_write(EigsValue *a) {  /* [lba, buffer[512]] -> 1|0 */
     if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
     if (!g_blk_unlocked) {
         serial_write("[m10] blk_write REFUSED: writes locked (blk_unlock first)\n");
@@ -364,19 +362,14 @@ static EigsValue *b_blk_write(EigsValue *a) {  /* [lba, 512 nums] -> 1|0 */
     double lba = list_num(a, 0);
     if (lba < 0) return eigs_value_new_num(0);
     EigsValue *data = eigs_value_list_get(a, 1);
-    if (!data || eigs_value_type(data) != EIGS_TYPE_LIST ||
-        eigs_value_list_len(data) != 512) {
+    if (!data || eigs_value_type(data) != EIGS_TYPE_BUFFER ||
+        eigs_value_buffer_len(data) != 512) {
         if (data) eigs_value_release(data);
         return eigs_value_new_num(0);
     }
     uint8_t buf[512];
-    for (int i = 0; i < 512; i++) {
-        EigsValue *item = eigs_value_list_get(data, i);
-        double b = (item && eigs_value_type(item) == EIGS_TYPE_NUM)
-                       ? eigs_value_as_num(item) : 0.0;
-        if (item) eigs_value_release(item);
-        buf[i] = (uint8_t)b;
-    }
+    for (int i = 0; i < 512; i++)
+        buf[i] = (uint8_t)eigs_value_buffer_get(data, i);
     eigs_value_release(data);
     return eigs_value_new_num(ata_write((uint64_t)lba, buf) ? 1 : 0);
 }
