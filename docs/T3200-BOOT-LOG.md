@@ -130,3 +130,56 @@ address byte-faithful vs serial; core2duo/3840 gate green.
 
 **Target side next visit: one-time setup with `memmap=64K\$0x3fff0000
 iomem=relaxed`, sentinel warm-reset test, firmware CSM check.**
+
+## 2026-07-02 — THIRD black screen at 0x3FFF0000 → dev-side rediagnosis: it was never the address
+
+Three wildly different addresses (16 MiB / 64 MiB / 959 MiB) produced
+the IDENTICAL failure. The only thing common to all three attempts is
+the option itself — and there's a double-expansion escaping bug that
+explains everything:
+
+1. `/etc/default/grub` is **sourced by `sh`** during `update-grub`.
+   Under `sh`, `"...\$..."` collapses to a literal `$`.
+2. The generated `/boot/grub/grub.cfg` then contains
+   `memmap=64K$0x3fff0000` — and **GRUB expands `$0x3fff0000` as a
+   variable** when parsing the menuentry. Undefined → empty.
+3. The kernel actually received **`memmap=64K`** = "use only 64 KiB of
+   RAM" → KASLR "no suitable memory region" → decompressor death →
+   black screen. Same result for ANY address, because the address never
+   reached the kernel.
+
+Both earlier diagnoses ("kernel base collision", "decompressor zone")
+were plausible, written down confidently, and **never verified at the
+point of truth**: no failing boot ever had its `/proc/cmdline`
+inspected — the only entries that booted were recovery entries, which
+don't carry `_DEFAULT`. Same lesson as the mn-repl heisenbug, one layer
+down: instrument the diagnosis before acting on it.
+
+### Procedure for THIS visit (after the usual recovery + revert)
+
+1. **Smoking-gun check (no reboot):** if any failing config remains,
+   `grep -n memmap /boot/grub/grub.cfg` — expect the UNESCAPED
+   `memmap=64K$0x3fff0000` (no backslash) = GRUB ate the address.
+2. **One-time proof boot (no permanent change, no revert risk):** at
+   the GRUB menu press `e` on the normal entry, append to the `linux`
+   line — single backslash, the GRUB editor has one expansion layer:
+   `memmap=64K\$0x3fff0000 iomem=relaxed`
+   then Ctrl-X. On success **VERIFY FIRST**:
+   `cat /proc/cmdline` must show `memmap=64K$0x3fff0000` with the full
+   address.
+3. **Sentinel warm-reset test** (as in CLAUDE.md): write the DRAMTEST
+   string via /dev/mem at `0x3fff0000`, `sudo reboot` (warm), read it
+   back. Sentinel survives → the crash-log channel is proven.
+4. **`sudo cat /proc/iomem` and paste it here** — the measured physical
+   map (kernel code/data/bss, initrd, our region as `reserved`). This
+   is the no-guessing oracle for any future address decision; it also
+   tells us whether the OLD diagnoses had any truth in them.
+5. **Make it permanent — TRIPLE backslash** in `/etc/default/grub`:
+   `GRUB_CMDLINE_LINUX_DEFAULT="quiet splash memmap=64K\\\$0x3fff0000 iomem=relaxed"`
+   then `sudo update-grub`, and BEFORE rebooting verify the generated
+   config: `grep memmap /boot/grub/grub.cfg` must show `\$0x3fff0000`
+   WITH the backslash. Missing backslash = do not reboot.
+6. Firmware CSM/boot-menu check on one of these reboots, as before.
+
+Record every outcome here (incl. a failed step 2 — that would refute
+the escaping theory and make the address story live again).
