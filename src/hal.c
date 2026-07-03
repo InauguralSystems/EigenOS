@@ -691,6 +691,14 @@ static void register_fs(void) {
  * assumes the same store state the recording ran against. */
 static char  *g_jrn_buf;
 static size_t g_jrn_len, g_jrn_cap;
+static int    g_jrn_on;          /* recording (sink installed) */
+
+/* M11 phase 2: pending session-replay lines, parsed from the journal's
+ * I records by journal_replay and DRIVEN BY THE REPL LOOP between
+ * evals (never from inside a builtin — that would nest the VM on the
+ * primary state). */
+static char **g_rp_lines;
+static int    g_rp_count;
 
 static void jrn_sink(const char *bytes, size_t len, void *ud) {
     (void)ud;
@@ -706,17 +714,38 @@ static void jrn_sink(const char *bytes, size_t len, void *ud) {
     g_jrn_len += len;
 }
 
+/* Record one submitted REPL source unit as an `I <escaped>` record in
+ * the journal, INTERLEAVED with the runtime's own L/A/N records (the
+ * runtime's replay reader skips anything that isn't `N ...`, so the
+ * tape stays valid for it). Newlines and backslashes are escaped so a
+ * multi-line block is one record line. journal_* meta-lines are NOT
+ * recorded — a replayed session must not rewrite the journal it is
+ * replaying from. */
+static void jrn_record_input(const char *src) {
+    if (!g_jrn_on || !src || !src[0]) return;
+    if (strncmp(src, "journal_", 8) == 0) return;
+    jrn_sink("I ", 2, 0);
+    for (const char *p = src; *p; p++) {
+        if (*p == '\n')      jrn_sink("\\n", 2, 0);
+        else if (*p == '\\') jrn_sink("\\\\", 2, 0);
+        else                 jrn_sink(p, 1, 0);
+    }
+    jrn_sink("\n", 1, 0);
+}
+
 static EigsValue *b_journal_on(EigsValue *a) {
     (void)a;
     g_jrn_len = 0;
+    g_jrn_on = 1;
     eigs_set_trace_sink(jrn_sink, 0);
-    serial_write("[m11] journal: recording\n");
+    serial_write("[m11] journal: recording (inputs + machine readings)\n");
     return eigs_value_new_num(1);
 }
 
 static EigsValue *b_journal_off(EigsValue *a) {
     (void)a;
     eigs_set_trace_sink(0, 0);              /* flushes the pending line */
+    g_jrn_on = 0;
     double n = (double)g_jrn_len;
     int ok = g_jrn_len > 0 &&
              fs_write_staged("journal", (unsigned char *)g_jrn_buf,
@@ -729,21 +758,72 @@ static EigsValue *b_journal_off(EigsValue *a) {
     return eigs_value_new_num(ok ? n : 0);
 }
 
+/* unescape one I record body [s, s+n) into a fresh C string */
+static char *jrn_unescape(const char *s, int n) {
+    char *out = malloc((size_t)n + 1);
+    if (!out) return 0;
+    int o = 0;
+    for (int i = 0; i < n; i++) {
+        if (s[i] == '\\' && i + 1 < n) {
+            i++;
+            out[o++] = (s[i] == 'n') ? '\n' : s[i];
+        } else out[o++] = s[i];
+    }
+    out[o] = 0;
+    return out;
+}
+
+static void rp_clear(void) {
+    for (int i = 0; i < g_rp_count; i++) free(g_rp_lines[i]);
+    free(g_rp_lines);
+    g_rp_lines = 0;
+    g_rp_count = 0;
+}
+
 static EigsValue *b_journal_replay(EigsValue *a) {
     (void)a;
+    if (g_jrn_on) {
+        serial_write("[m11] journal_replay REFUSED while recording\n");
+        return eigs_value_new_num(0);
+    }
     int n = 0;
     unsigned char *tape = fs_read_staged("journal", &n);
     if (!tape) return eigs_value_new_num(0);
     int ok = eigs_set_replay_tape((const char *)tape, (size_t)n, 0);
+    /* parse the I records: the session's input lines, in order */
+    rp_clear();
+    if (ok) {
+        int cap = 0;
+        int i = 0;
+        while (i < n) {
+            int e = i;
+            while (e < n && tape[e] != '\n') e++;
+            if (e - i > 2 && tape[i] == 'I' && tape[i + 1] == ' ') {
+                char *src = jrn_unescape((const char *)tape + i + 2, e - i - 2);
+                if (src) {
+                    if (g_rp_count == cap) {
+                        cap = cap ? cap * 2 : 8;
+                        char **nl = realloc(g_rp_lines,
+                                            (size_t)cap * sizeof(char *));
+                        if (!nl) { free(src); break; }
+                        g_rp_lines = nl;
+                    }
+                    g_rp_lines[g_rp_count++] = src;
+                }
+            }
+            i = e + 1;
+        }
+    }
     free(tape);                             /* the runtime copied it */
-    serial_write(ok ? "[m11] journal: replaying — nondet reads come from the tape\n"
+    serial_write(ok ? "[m11] journal: session loaded — replay begins after this eval\n"
                     : "[m11] journal: replay tape rejected\n");
-    return eigs_value_new_num(ok ? (double)n : 0);
+    return eigs_value_new_num(ok ? (double)g_rp_count : 0);
 }
 
 static EigsValue *b_journal_stop(EigsValue *a) {
     (void)a;
     eigs_set_replay_tape(0, 0, 0);
+    rp_clear();
     return eigs_value_new_num(1);
 }
 
@@ -1552,6 +1632,7 @@ static void repl_show_value(EigsValue *v) {
  * past stack_bottom must fail HERE, loudly, not as a delayed
  * layout-dependent fault. */
 static void repl_eval(const char *src) {
+    jrn_record_input(src);        /* M11: the session journal's I record */
     EigsValue *v = eigs_eval_string(src);
     /* If the eval died with gfx holding the screen, take it back — an
      * error message must never render invisibly (the T3200 has no
@@ -1578,6 +1659,30 @@ static void repl_eval(const char *src) {
         speaker_beeps(3);            /* 3 beeps = canary (2 = CPU exception) */
         for (;;) __asm__ volatile ("cli; hlt");
     }
+}
+
+/* M11 phase 2: drive a loaded session journal through the normal REPL
+ * eval path. Runs in the REPL loop BETWEEN evals — the only legal spot
+ * (an eval inside a builtin would nest the VM). Each replayed source
+ * unit is echoed with reconstructed prompts, evaluated (its nondet
+ * reads served from the tape in recorded order), then replay mode is
+ * ended so live typing never consumes stale tape records. */
+static void jrn_drive(void) {
+    if (!g_rp_count) return;
+    con_write("[journal] session replay:\n");
+    for (int i = 0; i < g_rp_count; i++) {
+        const char *src = g_rp_lines[i];
+        con_write("eigs> ");
+        for (const char *p = src; *p; p++) {
+            if (*p == '\n') { if (p[1]) con_write("\n....> "); }
+            else con_putc(*p);
+        }
+        con_putc('\n');
+        repl_eval(src);
+    }
+    rp_clear();
+    eigs_set_replay_tape(0, 0, 0);
+    con_write("[journal] session replay complete (live readings resume)\n");
 }
 
 /* ---- the line editor (MD groundwork) ----
@@ -1659,6 +1764,7 @@ void eigs_repl(void) {
                     ed_prompt("....> ");
                 } else {                          /* single line: eval now */
                     repl_eval(line);
+                    jrn_drive();                  /* M11: pending session replay */
                     ed_prompt("eigs> ");
                 }
             } else {
@@ -1666,6 +1772,7 @@ void eigs_repl(void) {
                     prog[plen] = 0;
                     cont = 0;
                     repl_eval(prog);
+                    jrn_drive();
                     ed_prompt("eigs> ");
                 } else if (plen + len + 2 > (int)sizeof(prog)) {
                     con_write("error: block too large, discarded\n");

@@ -535,11 +535,31 @@ upstream, never worked around.
       2133/42418600/21333 while the machine's live clock stood at 4228
       — recovery as replay across a power cycle; journal_stop resumed
       live readings. Contract (tidelog's, one level up): deterministic
-      given the durable input. REMAINING for M11: journal the REPL
-      input lines themselves (full-session replay without retyping),
-      auto-journal policy (always-on ring in the store?), `state_at`
-      over machine history at the REPL, and the liferaft-style chaos
-      sweep of journal replay against adversarial interleavings.
+      given the durable input.
+      **Phase 2 — the session journal (DONE 2026-07-03).** The REPL's
+      input lines join the tape as `I <escaped-source>` records,
+      interleaved with the runtime's L/A/N records in the same journal
+      (the runtime's replay reader skips non-N lines by contract, so
+      no upstream change was needed — the tape format is extensible
+      from the embedder side). A multi-line block is one I record.
+      `journal_replay of []` now replays the WHOLE SESSION in one
+      command: it loads the journal, installs the nondet tape, parses
+      the I records, and the REPL loop drives them BETWEEN evals (the
+      only legal spot — an eval inside a builtin would nest the VM),
+      echoing each unit with reconstructed prompts; replay mode then
+      ends so live typing never consumes stale records. journal_*
+      meta-lines are never recorded (a replayed session must not
+      rewrite the journal it replays from). QEMU-proven: record
+      `t is ticks of []` (3082) + a multi-line define + `d of 3`
+      (9246), reboot, one command — the session re-drives itself on
+      screen with the RECORDED readings while the live clock reads
+      3027, and afterward the session's BINDINGS exist live (`d of 3`
+      → 9246 with t bound to the recorded 3082): replay reconstructs
+      state, not just output — crash recovery as replay, in
+      miniature. REMAINING for M11: auto-journal policy (always-on
+      ring in the store?), `state_at` over machine history at the
+      REPL, and the liferaft-style chaos sweep of journal replay
+      against adversarial interleavings.
 
 ## Phase 5 — outward
 
