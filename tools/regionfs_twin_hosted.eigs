@@ -1,0 +1,267 @@
+# Hosted twin + crash sweep for demos/regionfs.eigs (M10 byte-region layer).
+#
+# Stubs the blk_* kernel seam with a simulated disk (dict lba -> sector
+# copy) that records every sector write, then:
+#   1. functional tests against a hand-maintained oracle (create,
+#      append across sector boundaries, truncate, rename-over-existing,
+#      remove, slot exhaustion, capacity, remount-from-disk)
+#   2. THE CRASH SWEEP — the sector-write analog of tidelog's
+#      every-offset truncation sweep: for every operation, every prefix
+#      of its sector writes is applied to a snapshot, the layer is
+#      re-mounted from that crashed disk, and the visible state must
+#      equal EXACTLY the pre-op committed state (prefix) or the post-op
+#      state (all writes) — atomicity at every sector-write boundary.
+# Run from the sibling EigenScript repo root:
+#   ./src/eigenscript ../EigenOS/tools/regionfs_twin_hosted.eigs
+# Exits nonzero on any failure.
+
+# ---- simulated disk --------------------------------------------------
+disk is {}
+wlog is []
+SIM_SECTORS is 128
+
+define bcopy(src) as:
+    local out is buffer of 512
+    local i is 0
+    loop while i < 512:
+        buf_set of [out, i, buf_get of [src, i]]
+        i is i + 1
+    return out
+
+define blk_present() as:
+    return 1
+
+define blk_sectors() as:
+    return SIM_SECTORS
+
+define blk_model() as:
+    return "SIMDISK"
+
+define blk_unlock() as:
+    return 1
+
+define blk_flush() as:
+    return 1
+
+define blk_read(lba) as:
+    local k is str of lba
+    if (has_key of [disk, k]) == 1:
+        return bcopy of disk[k]
+    return buffer of 512
+
+define blk_write(lba, data) as:
+    if (buf_len of data) != 512:
+        return 0
+    local k is str of lba
+    disk[k] is bcopy of data
+    append of [wlog, [lba, bcopy of data]]
+    return 1
+
+# ---- the layer under test (loads into this scope, shadowing the
+# hosted fs builtins by the same names — exactly what we want) --------
+load_file of "../EigenOS/demos/regionfs.eigs"
+
+# ---- checks ----------------------------------------------------------
+fails is 0
+
+define check(label, got, want) as:
+    if got == want:
+        print of ("PASS " + label)
+    if got != want:
+        fails is fails + 1
+        print of ("FAIL " + label + ": got " + (str of got) + " want " + (str of want))
+    return 0
+
+define mkbytes(n, seed) as:
+    local out is []
+    local i is 0
+    loop while i < n:
+        append of [out, (i * 7 + seed) % 256]
+        i is i + 1
+    return out
+
+define buf_eq_list(b, l) as:
+    if b == null:
+        return 0
+    if (buf_len of b) != (len of l):
+        return 0
+    local i is 0
+    loop while i < (len of l):
+        if (buf_get of [b, i]) != l[i]:
+            return 0
+        i is i + 1
+    return 1
+
+# ---- functional pass -------------------------------------------------
+check of ["virgin mount refused", mount of [], 0]
+check of ["format", format of [8, 4], 1]
+check of ["absent exists", file_exists of "a", 0]
+check of ["absent read null", (read_bytes_buf of "a") == null, 1]
+
+pa is mkbytes of [73, 1]
+check of ["create a", write_bytes of ["a", pa, 0], 1]
+ra is read_bytes_buf of "a"
+check of ["a content", buf_eq_list of [ra, pa], 1]
+
+pa2 is mkbytes of [100, 50]
+check of ["append a", write_bytes of ["a", pa2, 1], 1]
+paall is []
+for x in pa:
+    append of [paall, x]
+for x in pa2:
+    append of [paall, x]
+ra is read_bytes_buf of "a"
+check of ["a after append", buf_eq_list of [ra, paall], 1]
+
+pshort is mkbytes of [10, 9]
+check of ["truncate a", write_bytes of ["a", pshort, 0], 1]
+ra is read_bytes_buf of "a"
+check of ["a truncated", buf_eq_list of [ra, pshort], 1]
+
+# buffer-typed input + sector-boundary append (512 exact, no RMW)
+pb is mkbytes of [512, 3]
+pbbuf is buf_from_list of pb
+check of ["create b (buffer input)", write_bytes of ["b", pbbuf, 0], 1]
+pb2 is mkbytes of [512, 4]
+check of ["append b at boundary", write_bytes of ["b", pb2, 1], 1]
+pball is []
+for x in pb:
+    append of [pball, x]
+for x in pb2:
+    append of [pball, x]
+rb is read_bytes_buf of "b"
+check of ["b spans sectors", buf_eq_list of [rb, pball], 1]
+
+# rename over existing: destination replaced, its slot freed
+check of ["rename b over a", rename of ["b", "a"], 1]
+check of ["b gone", file_exists of "b", 0]
+ra is read_bytes_buf of "a"
+check of ["a is b's bytes", buf_eq_list of [ra, pball], 1]
+check of ["one file listed", len of (list_files of []), 1]
+
+# slot exhaustion: 4 slots total
+check of ["create c", write_bytes of ["c", mkbytes of [5, 5], 0], 1]
+check of ["create d", write_bytes of ["d", mkbytes of [5, 6], 0], 1]
+check of ["create e", write_bytes of ["e", mkbytes of [5, 7], 0], 1]
+check of ["fifth refused", write_bytes of ["f", mkbytes of [5, 8], 0], 0]
+
+# capacity: slot is 8 sectors = 4096 bytes
+check of ["remove c", remove_file of "c", 1]
+check of ["remove missing", remove_file of "c", 0]
+pfull is mkbytes of [4096, 11]
+check of ["exact-capacity write", write_bytes of ["big", pfull, 0], 1]
+check of ["append past capacity refused", write_bytes of ["big", [1], 1], 0]
+rbig is read_bytes_buf of "big"
+check of ["big content intact", buf_eq_list of [rbig, pfull], 1]
+
+# remount rebuilds everything from disk
+check of ["remount", mount of [], 1]
+check of ["files survive remount", len of (list_files of []), 4]
+ra is read_bytes_buf of "a"
+check of ["a survives remount", buf_eq_list of [ra, pball], 1]
+rbig is read_bytes_buf of "big"
+check of ["big survives remount", buf_eq_list of [rbig, pfull], 1]
+
+# ---- crash sweep ------------------------------------------------------
+# expected committed state as name -> byte list; null = unformatted
+define snap_disk() as:
+    local out is {}
+    for k in keys of disk:
+        out[k] is bcopy of disk[k]
+    return out
+
+define verify_state(label, exp) as:
+    local ok is mount of []
+    if exp == null:
+        check of [label + " unformatted", ok, 0]
+        return 0
+    check of [label + " mounts", ok, 1]
+    if ok == 0:
+        return 0
+    local names is keys of exp
+    check of [label + " file count", len of (list_files of []), len of names]
+    for nm in names:
+        local rb2 is read_bytes_buf of nm
+        check of [label + " " + nm, buf_eq_list of [rb2, exp[nm]], 1]
+    return 0
+
+define sweep_op(opname, pre, post) as:
+    # wlog holds this op's sector writes; live disk holds the post
+    # state. Replay every prefix onto the pre-op snapshot and demand
+    # pre-op state for every proper prefix, post-op state at the end.
+    local nw is len of wlog
+    local livedisk is disk
+    local k is 0
+    loop while k <= nw:
+        disk is snap_disk_from of presnap
+        local j is 0
+        loop while j < k:
+            disk[str of wlog[j][0]] is bcopy of wlog[j][1]
+            j is j + 1
+        if k < nw:
+            verify_state of [opname + " @" + (str of k), pre]
+        if k == nw:
+            verify_state of [opname + " @" + (str of k), post]
+        k is k + 1
+    disk is livedisk
+    mount of []
+    return 0
+
+define snap_disk_from(s) as:
+    local out is {}
+    for k in keys of s:
+        out[k] is bcopy of s[k]
+    return out
+
+# fresh simulated disk for the sweep
+disk is {}
+wlog is []
+presnap is {}
+
+# op 1: format (pre = unformatted)
+presnap is snap_disk of []
+wlog is []
+format of [8, 4]
+sweep_op of ["format", null, {}]
+
+# op 2: create x (700 bytes: two sectors, head at offset 0)
+xb is mkbytes of [700, 21]
+presnap is snap_disk of []
+wlog is []
+write_bytes of ["x", xb, 0]
+sweep_op of ["create x", {}, {"x": xb}]
+
+# op 3: append x (300 bytes: RMW of the tail sector)
+xb2 is mkbytes of [300, 22]
+xall is []
+for v in xb:
+    append of [xall, v]
+for v in xb2:
+    append of [xall, v]
+presnap is snap_disk of []
+wlog is []
+write_bytes of ["x", xb2, 1]
+sweep_op of ["append x", {"x": xb}, {"x": xall}]
+
+# op 4: create y
+yb is mkbytes of [64, 23]
+presnap is snap_disk of []
+wlog is []
+write_bytes of ["y", yb, 0]
+sweep_op of ["create y", {"x": xall}, {"x": xall, "y": yb}]
+
+# op 5: rename y over x (metadata-only commit; destination replaced)
+presnap is snap_disk of []
+wlog is []
+rename of ["y", "x"]
+sweep_op of ["rename y->x", {"x": xall, "y": yb}, {"x": yb}]
+
+# op 6: remove x
+presnap is snap_disk of []
+wlog is []
+remove_file of "x"
+sweep_op of ["remove x", {"x": yb}, {}]
+
+print of ("HARNESS failures: " + (str of fails))
+if fails > 0:
+    throw of "regionfs twin harness FAILED"

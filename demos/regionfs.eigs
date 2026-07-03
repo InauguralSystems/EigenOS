@@ -1,0 +1,393 @@
+# M10: the byte-region layer — tidelog's file-shaped seam over blk_*.
+#
+# regionfs gives the store exactly the four calls it touches disk with
+# (read_bytes_buf, append-mode write_bytes, rename, remove_file — plus
+# file_exists), implemented over the kernel's block seam. Policy in the
+# language: the crash-atomicity logic lives HERE, in EigenScript, where
+# the hosted twin can drive it through an every-sector-write crash
+# sweep against a simulated disk (tools/regionfs_twin_hosted.eigs).
+#
+# On-disk layout (512-byte sectors):
+#   LBA 0, LBA 1   superblock copies A/B — magic "EIGSREGN", a 6-byte
+#                  generation, format params, the whole region table
+#                  inline, and an Adler-32 over bytes 0..507 so a TORN
+#                  superblock write is detected and rejected.
+#   LBA 2 + i*S    data slot i (S = slot_sectors, fixed at format).
+#
+# A file is a table entry {name (<=20 bytes), slot, length}; capacity
+# is the slot size — this is a REGION table, not a general filesystem;
+# tidelog is the real store on top.
+#
+# THE COMMIT DISCIPLINE (how rename(2)'s atomicity is EARNED with no
+# kernel underneath): data sectors first, blk_flush, then the new
+# table + generation+1 written to the INACTIVE superblock copy, then
+# blk_flush again. Mount picks the valid copy with the higher
+# generation. A crash at any sector-write boundary therefore lands on
+# the OLD committed state or the NEW one, never between: uncommitted
+# data sectors are invisible (lengths live in the table), a torn
+# superblock fails its checksum and the other copy wins. Assumed crash
+# model: individual 512-byte sector writes are atomic (the same
+# assumption hosted tidelog inherits from the OS page cache).
+#
+# SAFETY: mount verifies the magic BEFORE calling blk_unlock, so on a
+# disk that is not a regionfs (e.g. the T3200's Linux disk, whose LBA 0
+# is an MBR) nothing ever unlocks and nothing can write. format is the
+# one deliberately dangerous act: it refuses unless the operator
+# already ran blk_unlock BY HAND this boot.
+
+MAGIC is [69, 73, 71, 83, 82, 69, 71, 78]
+MAX_NAME is 20
+ENT_SIZE is 32
+ENT_BASE is 24
+
+mounted is 0
+gen is 0
+active is 0
+slotsec is 0
+maxf is 0
+tab is []
+
+# ---- byte helpers (tidelog F-CBOR-1 idiom: pure arithmetic, exact) --
+
+define le_put(b, off, val, nbytes) as:
+    local rem is val
+    local i is 0
+    loop while i < nbytes:
+        buf_set of [b, off + i, rem % 256]
+        rem is floor of (rem / 256)
+        i is i + 1
+    return 0
+
+define le_get(b, off, nbytes) as:
+    local v is 0
+    local i is nbytes - 1
+    loop while i >= 0:
+        v is v * 256 + (buf_get of [b, off + i])
+        i is i - 1
+    return v
+
+define adler_of(b, upto) as:
+    # Adler-32; all intermediates stay far below 2^53 (exact)
+    local a is 1
+    local bb is 0
+    local i is 0
+    loop while i < upto:
+        a is (a + (buf_get of [b, i])) % 65521
+        bb is (bb + a) % 65521
+        i is i + 1
+    return bb * 65536 + a
+
+define name_put(b, off, s) as:
+    local n is len of s
+    if n > MAX_NAME:
+        n is MAX_NAME
+    local i is 0
+    loop while i < n:
+        buf_set of [b, off + i, ord of s[i]]
+        i is i + 1
+    loop while i < MAX_NAME:
+        buf_set of [b, off + i, 0]
+        i is i + 1
+    return 0
+
+define name_get(b, off) as:
+    local out is []
+    local i is 0
+    loop while i < MAX_NAME:
+        local c is buf_get of [b, off + i]
+        if c == 0:
+            return str_from_bytes of out
+        append of [out, c]
+        i is i + 1
+    return str_from_bytes of out
+
+# data arg may be a list or a buffer (hosted write_bytes accepts both)
+define d_len(d) as:
+    if (type of d) == "buffer":
+        return buf_len of d
+    return len of d
+
+define d_get(d, i) as:
+    if (type of d) == "buffer":
+        return buf_get of [d, i]
+    return d[i]
+
+# ---- superblock encode/decode/commit -------------------------------
+
+define sb_encode(g) as:
+    local b is buffer of 512
+    local i is 0
+    loop while i < 8:
+        buf_set of [b, i, MAGIC[i]]
+        i is i + 1
+    le_put of [b, 8, g, 6]
+    le_put of [b, 14, slotsec, 2]
+    buf_set of [b, 16, maxf]
+    local e is 0
+    loop while e < (len of tab):
+        local ent is tab[e]
+        local off is ENT_BASE + e * ENT_SIZE
+        name_put of [b, off, ent.name]
+        buf_set of [b, off + 20, 1]
+        buf_set of [b, off + 21, ent.slot]
+        le_put of [b, off + 22, ent.len, 6]
+        e is e + 1
+    le_put of [b, 508, adler_of of [b, 508], 4]
+    return b
+
+define sb_parse(b) as:
+    # -> generation, or -1 when the copy is invalid (bad magic/checksum)
+    if b == null:
+        return 0 - 1
+    if (buf_len of b) != 512:
+        return 0 - 1
+    local i is 0
+    loop while i < 8:
+        if (buf_get of [b, i]) != MAGIC[i]:
+            return 0 - 1
+        i is i + 1
+    if (le_get of [b, 508, 4]) != (adler_of of [b, 508]):
+        return 0 - 1
+    return le_get of [b, 8, 6]
+
+define sb_load(b) as:
+    # populate module state from a validated superblock
+    slotsec is le_get of [b, 14, 2]
+    maxf is buf_get of [b, 16]
+    tab is []
+    local e is 0
+    loop while e < maxf:
+        local off is ENT_BASE + e * ENT_SIZE
+        if (buf_get of [b, off + 20]) == 1:
+            append of [tab, {"name": name_get of [b, off], "slot": buf_get of [b, off + 21], "len": le_get of [b, off + 22, 6]}]
+        e is e + 1
+    return 0
+
+define sb_commit() as:
+    # the atomic step: new table -> the INACTIVE copy, generation + 1
+    local b is sb_encode of (gen + 1)
+    blk_write of [1 - active, b]
+    blk_flush of []
+    active is 1 - active
+    gen is gen + 1
+    return 1
+
+# ---- table lookups --------------------------------------------------
+
+define find_ent(path) as:
+    local i is 0
+    loop while i < (len of tab):
+        if tab[i].name == path:
+            return i
+        i is i + 1
+    return 0 - 1
+
+define free_slot() as:
+    local s is 0
+    loop while s < maxf:
+        local used is 0
+        local i is 0
+        loop while i < (len of tab):
+            if tab[i].slot == s:
+                used is 1
+            i is i + 1
+        if used == 0:
+            return s
+        s is s + 1
+    return 0 - 1
+
+define slot_lba(slot) as:
+    return 2 + slot * slotsec
+
+# ---- the public seam -------------------------------------------------
+
+define format(want_slotsec, want_maxf) as:
+    # DANGEROUS BY DESIGN: lays a fresh empty region table over the
+    # disk. Refuses unless the operator ran blk_unlock by hand (a
+    # locked blk_write fails and format reports it). Defaults: 12
+    # files, slots sized to split the disk evenly.
+    if (blk_present of []) == 0:
+        print of "regionfs: no disk"
+        return 0
+    local total is blk_sectors of []
+    local mf is want_maxf
+    if mf == null:
+        mf is 12
+    if mf > 15:
+        mf is 15
+    local ss is want_slotsec
+    if ss == null:
+        ss is floor of ((total - 2) / mf)
+    if ss > 65535:
+        ss is 65535
+    if ss < 1:
+        print of "regionfs: disk too small"
+        return 0
+    if 2 + mf * ss > total:
+        print of "regionfs: slots exceed disk"
+        return 0
+    slotsec is ss
+    maxf is mf
+    tab is []
+    gen is 0
+    active is 1
+    # invalidate copy B first, then commit copy A as generation 1
+    local zero is buffer of 512
+    if (blk_write of [1, zero]) == 0:
+        print of "regionfs: format refused (writes locked -- blk_unlock first)"
+        return 0
+    blk_flush of []
+    sb_commit of []
+    mounted is 1
+    return 1
+
+define mount() as:
+    # verify the magic FIRST; only then unlock writes for this boot
+    if (blk_present of []) == 0:
+        return 0
+    local ga is sb_parse of (blk_read of 0)
+    local gb is sb_parse of (blk_read of 1)
+    if (ga < 0) and (gb < 0):
+        return 0
+    local pick is 0
+    if gb > ga:
+        pick is 1
+    local b is blk_read of pick
+    sb_load of b
+    if pick == 0:
+        gen is ga
+    if pick == 1:
+        gen is gb
+    active is pick
+    blk_unlock of []
+    mounted is 1
+    return 1
+
+define file_exists(path) as:
+    if mounted == 0:
+        return 0
+    if (find_ent of path) >= 0:
+        return 1
+    return 0
+
+define read_bytes_buf(path) as:
+    # whole region, exact committed length; null when absent (hosted
+    # parity: read_bytes_buf of a missing path is null)
+    if mounted == 0:
+        return null
+    local ei is find_ent of path
+    if ei < 0:
+        return null
+    local ent is tab[ei]
+    local out is buffer of ent.len
+    local base is slot_lba of ent.slot
+    local got is 0
+    local s is 0
+    loop while got < ent.len:
+        local sec is blk_read of (base + s)
+        if sec == null:
+            return null
+        local i is 0
+        loop while (i < 512) and (got < ent.len):
+            buf_set of [out, got, buf_get of [sec, i]]
+            i is i + 1
+            got is got + 1
+        s is s + 1
+    return out
+
+define write_bytes(path, data, appendflag) as:
+    # create-on-write; truncate mode unless appendflag is 1; data may
+    # be a list or a buffer. Data sectors -> flush -> table commit.
+    if mounted == 0:
+        return 0
+    local dlen is d_len of data
+    local ei is find_ent of path
+    if ei < 0:
+        local s is free_slot of []
+        if s < 0:
+            print of "regionfs: no free slot"
+            return 0
+        if (len of path) > MAX_NAME:
+            print of "regionfs: name too long"
+            return 0
+        append of [tab, {"name": path, "slot": s, "len": 0}]
+        ei is (len of tab) - 1
+    local ent is tab[ei]
+    local start is 0
+    if appendflag == 1:
+        start is ent.len
+    if start + dlen > slotsec * 512:
+        print of "regionfs: region full"
+        return 0
+    local base is slot_lba of ent.slot
+    local pos is start
+    local di is 0
+    loop while di < dlen:
+        local sidx is floor of (pos / 512)
+        local soff is pos % 512
+        local sec is buffer of 512
+        if soff > 0:
+            # head partial sector: preserve committed bytes before start
+            sec is blk_read of (base + sidx)
+            if sec == null:
+                return 0
+        local i is soff
+        loop while (i < 512) and (di < dlen):
+            buf_set of [sec, i, d_get of [data, di]]
+            i is i + 1
+            di is di + 1
+            pos is pos + 1
+        if (blk_write of [base + sidx, sec]) == 0:
+            return 0
+    blk_flush of []
+    ent.len is start + dlen
+    sb_commit of []
+    return 1
+
+define rename(oldpath, newpath) as:
+    # POSIX shape: the destination is replaced atomically (its slot is
+    # freed in the same table commit)
+    if mounted == 0:
+        return 0
+    local oi is find_ent of oldpath
+    if oi < 0:
+        return 0
+    if oldpath == newpath:
+        return 1
+    local ni is find_ent of newpath
+    local out is []
+    local i is 0
+    loop while i < (len of tab):
+        if (i != ni) and (i != oi):
+            append of [out, tab[i]]
+        i is i + 1
+    local ent is tab[oi]
+    ent.name is newpath
+    append of [out, ent]
+    tab is out
+    sb_commit of []
+    return 1
+
+define remove_file(path) as:
+    if mounted == 0:
+        return 0
+    local ei is find_ent of path
+    if ei < 0:
+        return 0
+    local out is []
+    local i is 0
+    loop while i < (len of tab):
+        if i != ei:
+            append of [out, tab[i]]
+        i is i + 1
+    tab is out
+    sb_commit of []
+    return 1
+
+define list_files() as:
+    local out is []
+    local i is 0
+    loop while i < (len of tab):
+        append of [out, tab[i].name]
+        i is i + 1
+    return out

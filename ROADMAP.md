@@ -425,9 +425,37 @@ upstream, never worked around.
       byte-region layer must EARN crash-atomic swap itself
       (double-buffered region table + generation counter + ordered
       flushes), and tidelog's every-offset crash sweep re-runs hosted
-      against a simulated block device as the oracle. NEXT: the
-      byte-region layer with that file-shaped seam → the store
-      mounted on it → import/read_text un-carved.
+      against a simulated block device as the oracle.
+      **The byte-region layer (DONE 2026-07-03)** — `demos/regionfs.eigs`,
+      pure EigenScript over blk_*: tidelog's exact file-shaped seam
+      (`read_bytes_buf`, create-on-write/append `write_bytes` taking
+      list or buffer, `rename` with POSIX replace-over-existing,
+      `remove_file`, `file_exists`) on a double-buffered-superblock
+      layout — magic + 6-byte generation + inline region table +
+      Adler-32 (all coding in F-CBOR-1 exact arithmetic), fixed-size
+      slots behind it. THE COMMIT DISCIPLINE EARNS rename(2): data
+      sectors → flush → new table at generation+1 into the INACTIVE
+      superblock copy → flush; mount takes the valid copy with the
+      higher generation, so every op lands atomically on old-or-new
+      state (assumed model: 512-byte sector writes are atomic — the
+      same assumption hosted tidelog inherits from the page cache);
+      a torn superblock write fails its checksum and the sibling
+      copy wins. Safety composes: mount verifies the magic BEFORE
+      blk_unlock (the T3200's Linux disk reads as an MBR → mount 0 →
+      writes never unlock), and format refuses unless the operator
+      unlocked by hand. PROVEN: hosted twin
+      (tools/regionfs_twin_hosted.eigs, 74 checks) = functional suite
+      + THE CRASH SWEEP — every sector-write prefix of six ops
+      (format, multi-sector create, RMW append, create, rename-over-
+      existing, remove) mounted from a crashed-disk snapshot and
+      required to equal exactly the pre- or post-op committed state;
+      QEMU: mount refused the unformatted scratch disk, format, a
+      600-byte write + 100-byte RMW append read back exact (70057
+      signature), GUEST REBOOT, mount-by-magic auto-unlock, bytes
+      intact, rename verified under the new name. NEXT: mount
+      tidelog's store.eigs/cbor.eigs on this seam (the #248–250
+      durability primitives re-proven with no OS underneath) → then
+      the read_text/import un-carve story.
 - [ ] **M11 — the system journal.** The trace tape as machine journal:
       `prev of` and `state_at` against system state, boot-to-now history
       as a first-class object, crash recovery as replay rather than fsck
