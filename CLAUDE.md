@@ -117,17 +117,46 @@ sudo update-grub    # also set GRUB_TIMEOUT_STYLE=menu, GRUB_TIMEOUT=5
 ### One-time Linux setup for the crash log (do BEFORE the first attempt)
 
 EigenOS mirrors every log byte into a persistent-RAM ring at phys
-`0x3fff0000` (64 KiB, survives warm reset). For Linux to read it back after
-a hang, add to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`:
+`0x3fff0000` (64 KiB, survives warm reset). For Linux to read it back
+after a hang, Linux must boot with `memmap=64K$0x3fff0000 iomem=relaxed`
+— and getting that `$` through TWO expansion layers is the part that
+bricked three boots (2026-07-02): `/etc/default/grub` is sourced by sh
+(eats one backslash), then GRUB expands `$...` in grub.cfg (eats the
+rest). The kernel received `memmap=64K` = "use only 64 KiB of RAM" →
+black screen, for every address tried.
+
+**Step 1 — prove it with a ONE-TIME boot (no permanent change, no
+revert risk):** at the GRUB menu press `e` on the normal entry, append
+to the `linux` line (single backslash — the GRUB editor has one
+expansion layer):
 
 ```
 memmap=64K\$0x3fff0000 iomem=relaxed
 ```
 
-The `\$` is REQUIRED (grub eats a bare `$`). Then `sudo update-grub`,
-reboot, and verify `cat /proc/cmdline` shows `memmap=64K$0x3fff0000`.
-`memmap` keeps Linux out of the buffer; `iomem=relaxed` unblocks /dev/mem
-(Ubuntu ships STRICT_DEVMEM).
+Ctrl-X to boot, then VERIFY: `cat /proc/cmdline` must show
+`memmap=64K$0x3fff0000` with the full address. This verification was
+impossible on every failed attempt (the only bootable entry was
+recovery, which doesn't use `_DEFAULT`) — do it FIRST from now on.
+
+**Step 2 — make it permanent (TRIPLE backslash):** in
+`/etc/default/grub`:
+
+```
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash memmap=64K\\\$0x3fff0000 iomem=relaxed"
+```
+
+then `sudo update-grub` and verify the GENERATED config before
+rebooting: `grep memmap /boot/grub/grub.cfg` must show `\$0x3fff0000`
+with the backslash intact (GRUB reads `\$` as a literal `$`). If the
+backslash is missing, do not reboot — fix the escaping first.
+
+**No-guessing oracle:** once any memmap boot succeeds,
+`sudo cat /proc/iomem` is the measured physical map — kernel
+code/data/bss ranges, initrd, and our region listed as `reserved`.
+Use it instead of address guessing if anything ever collides again.
+`memmap` keeps Linux out of the buffer; `iomem=relaxed` unblocks
+/dev/mem (Ubuntu ships STRICT_DEVMEM).
 
 The address (1 GiB − 64 KiB) is the survivor of two field failures and
 two dev-side vetoes — see `src/crashlog.h` for the full collision list:
