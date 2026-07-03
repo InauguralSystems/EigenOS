@@ -408,10 +408,26 @@ upstream, never worked around.
       — bytes survive a reboot for the first time; the fresh boot's
       locked `blk_write` refused loudly; no-disk boot reports a clean
       absent verdict; core2duo/3840/smp2 gate green, zero post-Merom
-      instructions. NEXT: buffer embed API upstream → a byte-region
-      layer with tidelog's file-shaped seam (`read_bytes_buf`,
-      append-mode `write_bytes`, atomic `rename`) → the store mounted
-      on it.
+      instructions. **Buffer seam (DONE 2026-07-03)**: upstream PR
+      #364 (merged) added the embed buffer API
+      (`eigs_value_new_buffer/_len/_get/_set` + `EIGS_TYPE_BUFFER`);
+      blk_read/blk_write now speak real buffers — NUL-safe and the
+      exact shape tidelog's store I/O uses. QEMU-proven: list-era
+      sector reads back through buf_get; a buffer-written sector
+      round-trips exactly and survives a guest reboot. Tidelog's gap
+      ledger (FINDINGS.md) read against the freestanding carve: the
+      CBOR codec's primitives (#248: str_from_bytes, f64_to/from_bytes
+      + the buffer family) are UNCARVED and should run on EigenOS
+      as-is; the store's whole I/O seam (read_bytes_buf, append-mode
+      write_bytes from #249, rename + remove_file from #250) is
+      EXACTLY the carved set. The one gap that gets harder on bare
+      metal: #250's atomic rename was borrowed from rename(2) — the
+      byte-region layer must EARN crash-atomic swap itself
+      (double-buffered region table + generation counter + ordered
+      flushes), and tidelog's every-offset crash sweep re-runs hosted
+      against a simulated block device as the oracle. NEXT: the
+      byte-region layer with that file-shaped seam → the store
+      mounted on it → import/read_text un-carved.
 - [ ] **M11 — the system journal.** The trace tape as machine journal:
       `prev of` and `state_at` against system state, boot-to-now history
       as a first-class object, crash recovery as replay rather than fsck
