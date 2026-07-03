@@ -232,13 +232,13 @@ rejects ELF64, so GRUB does the loading.
   never unlocks. The boot self-test probes the whole stack:
   `[m10] fs: regionfs mounted, N file(s)`.
 - [~] **M11** — the system journal: trace tape over machine state.
-  Machine vitals are tape-recorded nondet inputs, the journal (inputs
-  + readings) persists in the store, and after a reboot
-  **`journal_replay of []` re-drives the whole session in one
-  command** — lines echo with their prompts, `ticks` answers the
-  previous boot's reading while the live clock disagrees, and the
-  replayed session's bindings exist live afterward: replay
-  reconstructs state, not just output;
+  Machine vitals are tape-recorded nondet inputs, and the machine is
+  **its own flight recorder**: every session auto-journals into a
+  bounded ring in the store (each boot archives the previous ring as
+  `lastboot`), so after an UNEXPECTED death — nothing manually saved
+  — one command re-drives the lost session with its recorded machine
+  readings and its bindings come back live: replay reconstructs
+  state, not just output;
   `prev of` / `state_at` against the computer itself; recovery = replay
 - [ ] **M12** — devices as `.eigs` drivers (port I/O, MMIO, IRQ callbacks
   from the language)

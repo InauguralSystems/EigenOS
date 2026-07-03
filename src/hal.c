@@ -429,6 +429,25 @@ static EigsState *cur_state(void) {
     return g_active_task >= 0 ? g_tasks[g_active_task].st : g_primary;
 }
 
+/* All fsd evals go through this pair. g_fsd_busy gates the M11 journal
+ * sink off while the fs daemon runs: its regionfs internals are
+ * MACHINERY, not session activity — without the gate every flush
+ * records its own per-byte write loops into the ring it is flushing
+ * (thousands of A records per flush; each flush slower than the last). */
+static int g_fsd_busy;
+
+static EigsState *fsd_enter(void) {
+    EigsState *back = cur_state();
+    g_fsd_busy = 1;
+    eigs_thread_switch(g_fs_state);
+    return back;
+}
+
+static void fsd_leave(EigsState *back) {
+    eigs_thread_switch(back);
+    g_fsd_busy = 0;
+}
+
 /* run one expression on the fsd; returns its numeric result (or `fail`
  * on error / non-number). Caller must already be SWITCHED to the fsd. */
 static double fsd_eval_num(const char *src, double fail) {
@@ -449,10 +468,9 @@ static void fsd_set_str(const char *g, const char *s) {
 static int fs_ensure_mounted(void) {
     if (!g_fs_state) return 0;
     if (g_fs_mounted) return 1;
-    EigsState *back = cur_state();
-    eigs_thread_switch(g_fs_state);
+    EigsState *back = fsd_enter();
     if (fsd_eval_num("regionfs.mount of []", 0) == 1.0) g_fs_mounted = 1;
-    eigs_thread_switch(back);
+    fsd_leave(back);
     return g_fs_mounted;
 }
 
@@ -495,8 +513,7 @@ static unsigned char *bytes_arg(EigsValue *d, int *out_n) {
  * buffer (caller frees) and its length, or NULL when absent/unmounted. */
 static unsigned char *fs_read_staged(const char *path, int *out_n) {
     if (!fs_ensure_mounted()) return NULL;
-    EigsState *back = cur_state();
-    eigs_thread_switch(g_fs_state);
+    EigsState *back = fsd_enter();
     fsd_set_str("fsd_path", path);
     EigsValue *v = eigs_eval_string("regionfs.read_bytes_buf of fsd_path");
     unsigned char *tmp = NULL;
@@ -510,7 +527,7 @@ static unsigned char *fs_read_staged(const char *path, int *out_n) {
                 tmp[i] = (unsigned char)eigs_value_buffer_get(v, i);
     }
     if (v) eigs_value_release(v);               /* released on the fsd */
-    eigs_thread_switch(back);
+    fsd_leave(back);
     if (tmp) *out_n = n;
     return tmp;
 }
@@ -519,8 +536,7 @@ static unsigned char *fs_read_staged(const char *path, int *out_n) {
 static int fs_write_staged(const char *path, const unsigned char *bytes,
                            int n, int append) {
     if (!fs_ensure_mounted()) return 0;
-    EigsState *back = cur_state();
-    eigs_thread_switch(g_fs_state);
+    EigsState *back = fsd_enter();
     fsd_set_str("fsd_path", path);
     EigsValue *bv = eigs_value_new_buffer(n);
     for (int i = 0; i < n; i++) eigs_value_buffer_set(bv, i, (double)bytes[i]);
@@ -534,7 +550,7 @@ static int fs_write_staged(const char *path, const unsigned char *bytes,
     EigsValue *nul = eigs_value_new_null();     /* drop the staged bytes */
     eigs_set_global("fsd_data", nul);
     eigs_value_release(nul);
-    eigs_thread_switch(back);
+    fsd_leave(back);
     return ok;
 }
 
@@ -542,11 +558,10 @@ static EigsValue *b_fs_file_exists(EigsValue *a) {
     char p[64];
     if (!path_arg(a, p, sizeof p) || !fs_ensure_mounted())
         return eigs_value_new_num(0);
-    EigsState *back = cur_state();
-    eigs_thread_switch(g_fs_state);
+    EigsState *back = fsd_enter();
     fsd_set_str("fsd_path", p);
     double r = fsd_eval_num("regionfs.file_exists of fsd_path", 0);
-    eigs_thread_switch(back);
+    fsd_leave(back);
     return eigs_value_new_num(r);
 }
 
@@ -627,12 +642,11 @@ static EigsValue *b_fs_rename(EigsValue *a) {        /* [old, new] */
     if (ov) eigs_value_release(ov);
     if (nv) eigs_value_release(nv);
     if (!ok || !fs_ensure_mounted()) return eigs_value_new_num(0);
-    EigsState *back = cur_state();
-    eigs_thread_switch(g_fs_state);
+    EigsState *back = fsd_enter();
     fsd_set_str("fsd_path", po);
     fsd_set_str("fsd_path2", pn);
     double r = fsd_eval_num("regionfs.rename of [fsd_path, fsd_path2]", 0);
-    eigs_thread_switch(back);
+    fsd_leave(back);
     return eigs_value_new_num(r);
 }
 
@@ -640,11 +654,10 @@ static EigsValue *b_fs_remove_file(EigsValue *a) {
     char p[64];
     if (!path_arg(a, p, sizeof p) || !fs_ensure_mounted())
         return eigs_value_new_num(0);
-    EigsState *back = cur_state();
-    eigs_thread_switch(g_fs_state);
+    EigsState *back = fsd_enter();
     fsd_set_str("fsd_path", p);
     double r = fsd_eval_num("regionfs.remove_file of fsd_path", 0);
-    eigs_thread_switch(back);
+    fsd_leave(back);
     return eigs_value_new_num(r);
 }
 
@@ -657,10 +670,9 @@ static EigsValue *b_fs_mount(EigsValue *a) {         /* explicit (re)mount */
 static EigsValue *b_fs_format(EigsValue *a) {        /* the manual act */
     (void)a;
     if (!g_fs_state) return eigs_value_new_num(0);
-    EigsState *back = cur_state();
-    eigs_thread_switch(g_fs_state);
+    EigsState *back = fsd_enter();
     double r = fsd_eval_num("regionfs.format of []", 0);
-    eigs_thread_switch(back);
+    fsd_leave(back);
     if (r == 1.0) g_fs_mounted = 1;
     return eigs_value_new_num(r);
 }
@@ -691,7 +703,22 @@ static void register_fs(void) {
  * assumes the same store state the recording ran against. */
 static char  *g_jrn_buf;
 static size_t g_jrn_len, g_jrn_cap;
-static int    g_jrn_on;          /* recording (sink installed) */
+static int    g_jrn_on;          /* MANUAL recording (journal_on..off) */
+
+/* M11 phase 3: the auto-journal ring — the machine as its own flight
+ * recorder. When a store mounted at boot, the sink is always on and
+ * the tape accumulates in THIS RAM ring: at AUTO_CAP the buffer slides
+ * to its newest half, cutting at an I-record boundary so the surviving
+ * tail is replay-coherent (a tail with no I records drives nothing —
+ * orphan N records are never consumed; harmless). Between evals the
+ * REPL loop truncate-writes the whole ring to the store file
+ * "autolog" — the file IS a snapshot of the ring, so there is no
+ * rotation machinery and a crash loses only the since-last-eval tail.
+ * After an unexpected death: journal_replay of "autolog". */
+#define JRN_AUTO_CAP 65536
+static int g_auto_on;            /* auto ring active (store mounted) */
+static int g_jrn_dirty;          /* ring has bytes the store hasn't seen */
+static int g_rp_driving;         /* a session replay is being driven */
 
 /* M11 phase 2: pending session-replay lines, parsed from the journal's
  * I records by journal_replay and DRIVEN BY THE REPL LOOP between
@@ -702,6 +729,7 @@ static int    g_rp_count;
 
 static void jrn_sink(const char *bytes, size_t len, void *ud) {
     (void)ud;
+    if (g_fsd_busy) return;      /* fs-daemon machinery is not session activity */
     if (g_jrn_len + len > g_jrn_cap) {
         size_t nc = g_jrn_cap ? g_jrn_cap * 2 : 4096;
         while (nc < g_jrn_len + len) nc *= 2;
@@ -712,6 +740,33 @@ static void jrn_sink(const char *bytes, size_t len, void *ud) {
     }
     memcpy(g_jrn_buf + g_jrn_len, bytes, len);
     g_jrn_len += len;
+    g_jrn_dirty = 1;
+    /* ring bound: slide to the newest half, cutting where an I record
+     * starts so the tail replays coherently */
+    if (g_jrn_len > JRN_AUTO_CAP) {
+        size_t cut = 0;
+        for (size_t i = g_jrn_len / 2; i + 2 < g_jrn_len; i++)
+            if (g_jrn_buf[i] == '\n' && g_jrn_buf[i + 1] == 'I' &&
+                g_jrn_buf[i + 2] == ' ') { cut = i + 1; break; }
+        if (!cut)                          /* no I record in the tail: any
+                                              line boundary is safe */
+            for (size_t i = g_jrn_len / 2; i < g_jrn_len; i++)
+                if (g_jrn_buf[i] == '\n') { cut = i + 1; break; }
+        if (cut && cut < g_jrn_len) {
+            memmove(g_jrn_buf, g_jrn_buf + cut, g_jrn_len - cut);
+            g_jrn_len -= cut;
+        }
+    }
+}
+
+/* Flush the ring to the store — called by the REPL loop BETWEEN evals
+ * (the fs delegate switches states; never do this mid-eval). Truncate
+ * mode: the file is a snapshot of the ring. */
+static void jrn_auto_flush(void) {
+    if (!g_auto_on || g_jrn_on || !g_jrn_dirty || !g_jrn_len) return;
+    if (fs_write_staged("autolog", (unsigned char *)g_jrn_buf,
+                        (int)g_jrn_len, 0))
+        g_jrn_dirty = 0;
 }
 
 /* Record one submitted REPL source unit as an `I <escaped>` record in
@@ -722,7 +777,8 @@ static void jrn_sink(const char *bytes, size_t len, void *ud) {
  * recorded — a replayed session must not rewrite the journal it is
  * replaying from. */
 static void jrn_record_input(const char *src) {
-    if (!g_jrn_on || !src || !src[0]) return;
+    if ((!g_jrn_on && !g_auto_on) || g_rp_driving) return;
+    if (!src || !src[0]) return;
     if (strncmp(src, "journal_", 8) == 0) return;
     jrn_sink("I ", 2, 0);
     for (const char *p = src; *p; p++) {
@@ -734,8 +790,12 @@ static void jrn_record_input(const char *src) {
 }
 
 static EigsValue *b_journal_on(EigsValue *a) {
+    /* the MANUAL bracket: a deliberate session saved to "journal".
+     * The auto ring pauses (its content is discarded — the manual
+     * session records clean) and resumes at journal_off. */
     (void)a;
     g_jrn_len = 0;
+    g_jrn_dirty = 0;
     g_jrn_on = 1;
     eigs_set_trace_sink(jrn_sink, 0);
     serial_write("[m11] journal: recording (inputs + machine readings)\n");
@@ -744,15 +804,14 @@ static EigsValue *b_journal_on(EigsValue *a) {
 
 static EigsValue *b_journal_off(EigsValue *a) {
     (void)a;
-    eigs_set_trace_sink(0, 0);              /* flushes the pending line */
+    if (!g_auto_on) eigs_set_trace_sink(0, 0);  /* flushes pending line */
     g_jrn_on = 0;
     double n = (double)g_jrn_len;
     int ok = g_jrn_len > 0 &&
              fs_write_staged("journal", (unsigned char *)g_jrn_buf,
                              (int)g_jrn_len, 0);
-    free(g_jrn_buf);
-    g_jrn_buf = 0;
-    g_jrn_len = g_jrn_cap = 0;
+    g_jrn_len = 0;                          /* auto ring restarts clean */
+    g_jrn_dirty = 0;
     serial_write(ok ? "[m11] journal: written to the store\n"
                     : "[m11] journal: NOT written (empty or store refused)\n");
     return eigs_value_new_num(ok ? n : 0);
@@ -781,13 +840,19 @@ static void rp_clear(void) {
 }
 
 static EigsValue *b_journal_replay(EigsValue *a) {
-    (void)a;
+    /* optional string arg: which journal file — "journal" (the manual
+     * save, default) or "autolog" (the ring: what a crashed session
+     * was doing). */
+    char path[64] = "journal";
+    if (a && eigs_value_type(a) == EIGS_TYPE_STR) {
+        if (!path_arg(a, path, sizeof path)) return eigs_value_new_num(0);
+    }
     if (g_jrn_on) {
         serial_write("[m11] journal_replay REFUSED while recording\n");
         return eigs_value_new_num(0);
     }
     int n = 0;
-    unsigned char *tape = fs_read_staged("journal", &n);
+    unsigned char *tape = fs_read_staged(path, &n);
     if (!tape) return eigs_value_new_num(0);
     int ok = eigs_set_replay_tape((const char *)tape, (size_t)n, 0);
     /* parse the I records: the session's input lines, in order */
@@ -1574,10 +1639,9 @@ int eigs_run_demo(void) {
      * refuses and stays locked). Read-only unless a store exists. */
     if (g_fs_state) {
         if (fs_ensure_mounted()) {
-            EigsState *back = cur_state();
-            eigs_thread_switch(g_fs_state);
+            EigsState *back = fsd_enter();
             double nf = fsd_eval_num("len of (regionfs.list_files of [])", -1);
-            eigs_thread_switch(back);
+            fsd_leave(back);
             serial_write("[m10] fs: regionfs mounted, ");
             serial_write_dec((uint64_t)(nf < 0 ? 0 : nf));
             serial_write(" file(s) OK\n");
@@ -1632,6 +1696,11 @@ static void repl_show_value(EigsValue *v) {
  * past stack_bottom must fail HERE, loudly, not as a delayed
  * layout-dependent fault. */
 static void repl_eval(const char *src) {
+    /* journal_* verbs are META: neither their I record (jrn_record_input
+     * skips it) nor their runtime L/A records belong in the ring — a
+     * replay-only session must leave the ring untouched. */
+    int jmeta = strncmp(src, "journal_", 8) == 0;
+    if (jmeta && g_auto_on && !g_jrn_on) eigs_set_trace_sink(0, 0);
     jrn_record_input(src);        /* M11: the session journal's I record */
     EigsValue *v = eigs_eval_string(src);
     /* If the eval died with gfx holding the screen, take it back — an
@@ -1653,6 +1722,7 @@ static void repl_eval(const char *src) {
         repl_show_value(v);
     }
     if (v) eigs_value_release(v);
+    if (jmeta && g_auto_on && !g_jrn_on) eigs_set_trace_sink(jrn_sink, 0);
     if (!stack_canary_ok()) {
         con_write("PANIC: boot-stack overflow (canary trampled by that "
                   "eval). Halting.\n");
@@ -1669,6 +1739,8 @@ static void repl_eval(const char *src) {
  * ended so live typing never consumes stale tape records. */
 static void jrn_drive(void) {
     if (!g_rp_count) return;
+    g_rp_driving = 1;                /* a replay must not record itself */
+    if (g_auto_on) eigs_set_trace_sink(0, 0);   /* nor fill the ring */
     con_write("[journal] session replay:\n");
     for (int i = 0; i < g_rp_count; i++) {
         const char *src = g_rp_lines[i];
@@ -1682,6 +1754,8 @@ static void jrn_drive(void) {
     }
     rp_clear();
     eigs_set_replay_tape(0, 0, 0);
+    g_rp_driving = 0;
+    if (g_auto_on) eigs_set_trace_sink(jrn_sink, 0);
     con_write("[journal] session replay complete (live readings resume)\n");
 }
 
@@ -1718,6 +1792,25 @@ void eigs_repl(void) {
     vga_clear();
     con_write("EigenScript REPL on EigenOS -- Enter evals. A line ending in ':'\n");
     con_write("opens a block: keep typing lines, a blank line runs it.\n");
+
+    /* M11: the flight recorder — when a store mounted at boot, the
+     * session journals itself; after a crash, journal_replay of
+     * "autolog" re-drives what was lost. */
+    if (g_fs_mounted) {
+        /* archive the previous boot's ring FIRST — the first live flush
+         * would otherwise overwrite the crash evidence */
+        EigsState *back = fsd_enter();
+        fsd_set_str("fsd_path", "autolog");
+        if (fsd_eval_num("regionfs.file_exists of fsd_path", 0) == 1.0) {
+            fsd_set_str("fsd_path2", "lastboot");
+            fsd_eval_num("regionfs.rename of [fsd_path, fsd_path2]", 0);
+            fsd_leave(back);
+            con_write("[m11] auto-journal: previous session archived as \"lastboot\"\n");
+        } else fsd_leave(back);
+        g_auto_on = 1;
+        eigs_set_trace_sink(jrn_sink, 0);
+        con_write("[m11] auto-journal: on (ring \"autolog\" in the store)\n");
+    }
 
     char line[512], draft[512];
     static char prog[4096];       /* accumulated block (M6 multi-line) */
@@ -1765,6 +1858,7 @@ void eigs_repl(void) {
                 } else {                          /* single line: eval now */
                     repl_eval(line);
                     jrn_drive();                  /* M11: pending session replay */
+                    jrn_auto_flush();             /* M11: ring -> the store */
                     ed_prompt("eigs> ");
                 }
             } else {
@@ -1773,6 +1867,7 @@ void eigs_repl(void) {
                     cont = 0;
                     repl_eval(prog);
                     jrn_drive();
+                    jrn_auto_flush();
                     ed_prompt("eigs> ");
                 } else if (plen + len + 2 > (int)sizeof(prog)) {
                     con_write("error: block too large, discarded\n");

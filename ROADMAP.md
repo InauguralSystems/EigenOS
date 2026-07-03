@@ -556,10 +556,37 @@ upstream, never worked around.
       3027, and afterward the session's BINDINGS exist live (`d of 3`
       → 9246 with t bound to the recorded 3082): replay reconstructs
       state, not just output — crash recovery as replay, in
-      miniature. REMAINING for M11: auto-journal policy (always-on
-      ring in the store?), `state_at` over machine history at the
-      REPL, and the liferaft-style chaos sweep of journal replay
-      against adversarial interleavings.
+      miniature.
+      **Phase 3 — the auto-journal ring (DONE 2026-07-03).** The
+      machine is its own flight recorder: when a store mounted at
+      boot, the session journals itself — no operator bracket. The
+      ring lives in RAM (64 KiB cap; on overflow it slides to the
+      newest half, cutting at an I-record boundary so the surviving
+      tail stays replay-coherent — a burst that evicts all I records
+      drives nothing, harmlessly: bounded evidence, newest wins), and
+      the REPL loop truncate-writes the whole ring to the store file
+      "autolog" between evals — the file is a snapshot of the ring,
+      no rotation machinery, crash loses only the since-last-eval
+      tail. Every boot ARCHIVES the previous ring as "lastboot"
+      before the first flush can touch it; after an unexpected death:
+      `journal_replay of "lastboot"`. Two real bugs found and fixed
+      during verification: (1) the recorder recorded its own flushes
+      — the trace sink is process-global, so the fs daemon's per-byte
+      write loops poured thousands of A records into the ring being
+      flushed, each flush slower than the last; all fsd evals now run
+      behind a g_fsd_busy gate (machinery is not session activity);
+      (2) journal_* meta evals' L records dirtied the ring so a
+      replay-only session clobbered "autolog" — meta evals now
+      suspend the sink. The manual journal_on/off bracket still works
+      (auto pauses, resumes after). QEMU-proven: a session (x from
+      ticks, two derived bindings) with NOTHING manually saved, the
+      machine KILLED mid-session, rebooted — one command re-drove all
+      three lines with the recorded readings and the dead session's
+      bindings were live again; byte-dumps of the ring at every stage
+      verified the pipeline (I/L/A/N records exactly as designed).
+      REMAINING for M11: `state_at` over machine history at the REPL,
+      and the liferaft-style chaos sweep of journal replay against
+      adversarial interleavings.
 
 ## Phase 5 — outward
 
