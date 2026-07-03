@@ -1,10 +1,13 @@
-/* Persistent-RAM boot/crash log (M7 prep).
+/* Boot/crash log ring in physical RAM (M7 prep).
  *
  * Every byte that goes to serial is mirrored into a fixed physical ring
- * buffer. On a machine with no serial port (the T3200), a hang is
- * debugged by warm-rebooting into the resident Linux and reading the
- * buffer back via /dev/mem (tools/t3200_read_crashlog.sh) — DRAM
- * contents survive a warm reset. The buffer address is part of the
+ * buffer. FIELD RESULT (docs/T3200-BOOT-LOG.md, 2026-07-02): on the
+ * T3200, DRAM does NOT survive a warm reset (sentinel-tested), so the
+ * reboot-into-Linux readback (tools/t3200_read_crashlog.sh) is DEAD on
+ * that hardware — its post-mortem channels are the VGA screen + beep
+ * codes. The ring remains load-bearing on the dev side: QEMU `pmemsave`
+ * + the same reader script recover the full log from a live or wedged
+ * guest without any reboot, byte-faithful vs serial (validated). The buffer address is part of the
  * machine contract:
  *   - EigenOS: pmm_init reserves [CRASHLOG_PHYS, +CRASHLOG_SIZE) so the
  *     heap never hands it out; the low identity map makes it writable

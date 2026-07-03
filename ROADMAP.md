@@ -91,44 +91,30 @@ upstream, never worked around.
       `a is 6*7`→42, string concat with `"`/`+`/`!`, a typed multi-line
       `define` (`sq of 12`→144), a typed observer loop (`converged`→1),
       list literals via brackets; T3200 sim gate re-run green.
-- [ ] **M7 — boot the T3200.** The crossing from emulated to real. The
-      The target is a **Gateway M-7317U** (inventory: docs/T3200-INVENTORY.md,
-      captured 2026-07-02): GM45/ICH9M, CPU flags match the sim gate
-      exactly, ~3.94 GiB with a heavily fragmented e820 (PMM verified
-      hole-safe: free-by-inclusion over MB2 AVAILABLE entries, and it
-      parsed OVMF's 6-region map live), Wi-Fi works (scp delivery OK),
-      **no serial** (all four ISA UARTs probe `unknown`), no FireWire /
-      ExpressCard, disk throwing ATA exceptions (don't depend on it).
-      **The firmware is UEFI** (Ubuntu boots via grub-efi from an ESP;
-      2008-vintage EFI). EFI handoff is PROVEN: under OVMF+GRUB-EFI the
-      whole kernel boots green through the runtime tripwires (serial
-      log, 2026-07-02). The open risk is VIDEO ONLY — UEFI leaves the
-      display in a GOP graphics mode, so 0xB8000 text writes don't
-      render: a running REPL you cannot see, and there is no serial.
-      Attempt order:
-      1. **USB stick via the firmware's legacy/CSM boot entry** (a 2008
-         EFI almost certainly has CSM). BIOS-path boot → real VGA text →
-         everything works as designed. `make usb USB=/dev/sdX`. This is
-         the primary attempt; also check the firmware setup screen for a
-         "Legacy"/"CSM" toggle while there.
-      2. **Persistent-RAM crash log — DONE (dev side, 2026-07-02).**
-         Every serial byte mirrors into a 64 KiB ring at phys `0x1000000`
-         (`src/crashlog.c`; PMM-reserved; claimed first thing in
-         kernel_main). Linux reads it back via
-         `tools/t3200_read_crashlog.sh` (needs the one-time
-         `memmap=64K\$0x1000000 iomem=relaxed` cmdline — see CLAUDE.md).
-         Validated in QEMU: `pmemsave` dump parsed by the same script is
-         byte-faithful vs the serial log. Also landed: fatal exceptions
-         + canary panics now render to VGA and sound beep codes (2 =
-         CPU exception, 3 = canary), and the MN demo verdicts write to
-         VGA rows 17–19 (they were serial-only — invisible on a machine
-         with no serial). Remaining on-target validation: that this
-         firmware preserves DRAM across a warm reset.
-      3. **The EFI GRUB menuentry route** (dual-boot, no media) is
-         proven to RUN but is blind until a **framebuffer console**
-         exists (MB2 framebuffer-request tag + font blit to the GOP
-         framebuffer). Build that if the firmware has no CSM — worth
-         having eventually regardless (post-CSM-era hardware).
+- [ ] **M7 — boot the T3200.** The crossing from emulated to real.
+      The target is a **Gateway M-7317U** (inventory: docs/T3200-INVENTORY.md;
+      boot experiments: docs/T3200-BOOT-LOG.md): GM45/ICH9M, CPU flags
+      match the sim gate exactly, ~3.94 GiB fragmented e820 (PMM verified
+      hole-safe), Wi-Fi works, **no serial**, no FireWire/ExpressCard,
+      flaky disk. **Boots via BIOS/CSM natively** (/sys/firmware/efi
+      absent — the earlier "UEFI" conclusion was an unverified inference;
+      an inactive ESP exists). **DRAM does NOT survive warm reset**
+      (sentinel-tested), so the RAM crash-log ring is a dev-side/QEMU
+      instrument only; on this hardware the post-mortem channels are the
+      VGA screen + panic beep codes (2 = CPU exception, 3 = canary), and
+      all boot/demo verdicts render to VGA (rows 17–19 + the board).
+      Attempt plan (simplified by the CSM finding — no firmware changes
+      needed, real VGA text is the native mode):
+      1. **USB stick** (`make usb USB=/dev/sdX`, F10 boot menu at
+         power-on, Setup = F2) → BIOS GRUB → VGA text → verdicts on
+         screen → the REPL.
+      2. Once proven: the **GRUB menuentry dual-boot** becomes the
+         everyday no-media path — BIOS GRUB gives the same VGA text (the
+         GOP-blindness caveat applied only to an EFI boot path).
+      3. UEFI insurance already banked: the kernel boots green under
+         OVMF+GRUB-EFI (matters for future hardware / if the boot mode
+         ever changes; a framebuffer console would be needed for video
+         in that mode).
       Success = the M5/MN self-tests green on screen and a hand-typed
       observer loop converging on 2008 silicon.
       Later upgrade (only when live debugging earns it): a gdb remote

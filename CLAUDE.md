@@ -59,15 +59,18 @@ and the post-mortem debugger. Hard rules:
 The load-bearing facts: Gateway M-7317U, GM45/ICH9M; CPU matches the sim
 gate exactly; fragmented e820 (PMM verified hole-safe); **no serial** (all
 four ISA UARTs probe `unknown` — the screen is the only live console);
-**firmware is UEFI** (Ubuntu boots grub-efi from the ESP on sda2); /boot is
-NOT a separate partition; Wi-Fi works (scp/gh fine); the disk logs ATA
-exceptions — don't depend on it beyond /boot.
+**boots via BIOS/CSM, NOT UEFI** (`/sys/firmware/efi` absent; an ESP
+exists from the Ubuntu install but is not the active boot path — the
+earlier "firmware is UEFI" conclusion was an unverified inference from
+the mounted /boot/efi); /boot is NOT a separate partition; Wi-Fi works
+(scp/gh fine); the disk logs ATA exceptions — don't depend on it beyond
+/boot. **DRAM does NOT survive warm reset here** (sentinel-tested
+2026-07-02) — no RAM-persistence tricks on this hardware.
 
-**UEFI status (verified on the dev side under OVMF, 2026-07-02):** the
-kernel boots green under GRUB-EFI — handoff, fragmented memory map, all
-self-tests, REPL. But UEFI leaves the display in a GOP graphics mode, so
-VGA text at 0xB8000 does NOT render: booted via the EFI menuentry, EigenOS
-runs blind (and there's no serial here). Hence the attempt order below.
+**UEFI insurance (dev side, under OVMF):** the kernel is proven to boot
+green under GRUB-EFI too — but under EFI the display stays in GOP
+graphics mode (no VGA text). Irrelevant while this machine boots CSM;
+matters only if the boot mode ever changes or on future hardware.
 
 ### Build the kernel here (primary delivery path)
 
@@ -83,22 +86,19 @@ cd EigenOS && make && make verify
 
 ### Boot attempt order (M7)
 
-**1. USB stick via the firmware's legacy/CSM boot path — the primary
-attempt.** A 2008 EFI almost certainly ships CSM. Build the stick
+**1. USB stick — the primary attempt, and it needs NO firmware changes:
+this machine already boots BIOS/CSM natively.** Build the stick
 (`make usb USB=/dev/sdX` — on THIS machine only use a removable stick,
-never the internal disk), reboot into the firmware boot menu — on this
-machine **Setup = F2, boot menu = F10** (confirmed by Jon); check Setup
-for a "Legacy"/"CSM"/"Boot mode" toggle and note what you find in
-docs/T3200-BOOT-LOG.md. Pick the USB in legacy
-mode → BIOS GRUB → real VGA text mode → self-test verdicts on screen →
-the REPL. This is the path where everything works as already designed.
+never the internal disk), **F10** at power-on for the boot menu (Setup
+is **F2**), pick the USB → BIOS GRUB → real VGA text mode → self-test
+verdicts on screen → the REPL. This is the path where everything works
+as already designed.
 
-**2. The EFI GRUB menuentry (dual-boot, no media) — only useful once a
-framebuffer console exists.** Proven under OVMF to boot and run fine, but
-the screen stays in GOP graphics mode: the REPL runs invisibly and this
-laptop has no serial. Do not use this path for the first attempt; it
-becomes the everyday path after the framebuffer console lands. For
-reference when that day comes:
+**2. The GRUB menuentry (dual-boot, no media) — the everyday path once
+the stick has proven the kernel on this hardware.** Since the machine
+boots BIOS GRUB (not EFI), the GOP-blindness concern does NOT apply
+here: a menuentry boot gets real VGA text exactly like the stick. For
+when that day comes:
 
 ```
 sudo cp build/EigenOS.elf /boot/EigenOS.elf
@@ -115,97 +115,40 @@ sudo update-grub    # also set GRUB_TIMEOUT_STYLE=menu, GRUB_TIMEOUT=5
 (`/boot` is not a separate partition here, so the GRUB path really is
 `/boot/EigenOS.elf`.)
 
-### One-time Linux setup for the crash log (do BEFORE the first attempt)
+### Post-mortem channels (updated after the 2026-07-02 sentinel run)
 
-EigenOS mirrors every log byte into a persistent-RAM ring at phys
-`0x3fff0000` (64 KiB, survives warm reset). For Linux to read it back
-after a hang, Linux must boot with `memmap=64K$0x3fff0000 iomem=relaxed`
-— and getting that `$` through TWO expansion layers is the part that
-bricked three boots (2026-07-02): `/etc/default/grub` is sourced by sh
-(eats one backslash), then GRUB expands `$...` in grub.cfg (eats the
-rest). The kernel received `memmap=64K` = "use only 64 KiB of RAM" →
-black screen, for every address tried.
+**The RAM crash-log ring does NOT work as a reboot-surviving channel on
+this hardware**: DRAM provably does not survive warm reset here (the
+sentinel test wrote a string at `0x3fff0000`, verified it, rebooted, and
+read back only floating-DRAM decay). Every setup piece was validated —
+the triple-backslash `memmap` escaping, the reservation
+(`/proc/iomem` shows `3fff0000-3fffffff : Reserved`), `iomem=relaxed`
+devmem reads — but the physics vetoes the design on this machine.
 
-**Step 1 — prove it with a ONE-TIME boot (no permanent change, no
-revert risk):** at the GRUB menu press `e` on the normal entry, append
-to the `linux` line (single backslash — the GRUB editor has one
-expansion layer):
-
-```
-memmap=64K\$0x3fff0000 iomem=relaxed
-```
-
-Ctrl-X to boot, then VERIFY: `cat /proc/cmdline` must show
-`memmap=64K$0x3fff0000` with the full address. This verification was
-impossible on every failed attempt (the only bootable entry was
-recovery, which doesn't use `_DEFAULT`) — do it FIRST from now on.
-
-**Step 2 — make it permanent (TRIPLE backslash):** in
-`/etc/default/grub`:
-
-```
-GRUB_CMDLINE_LINUX_DEFAULT="quiet splash memmap=64K\\\$0x3fff0000 iomem=relaxed"
-```
-
-then `sudo update-grub` and verify the GENERATED config before
-rebooting: `grep memmap /boot/grub/grub.cfg` must show `\$0x3fff0000`
-with the backslash intact (GRUB reads `\$` as a literal `$`). If the
-backslash is missing, do not reboot — fix the escaping first.
-
-**No-guessing oracle:** once any memmap boot succeeds,
-`sudo cat /proc/iomem` is the measured physical map — kernel
-code/data/bss ranges, initrd, and our region listed as `reserved`.
-Use it instead of address guessing if anything ever collides again.
-`memmap` keeps Linux out of the buffer; `iomem=relaxed` unblocks
-/dev/mem (Ubuntu ships STRICT_DEVMEM).
-
-The address (1 GiB − 64 KiB) is the survivor of two field failures and
-two dev-side vetoes — see `src/crashlog.h` for the full collision list:
-16 MiB = Linux's kernel load base (no boot), 64 MiB = inside the kernel
-decompressor's zone (black-screen hang), 128 MiB = top of QEMU's default
-RAM, 1 GiB exactly = one byte past EigenOS's boot identity map. Do NOT
-"simplify" it. If a memmap change ever bricks the normal entry again:
-GRUB recovery entry → root shell → `mount -o remount,rw /` → revert
-`/etc/default/grub` → `update-grub` → reboot. Field-tested, twice.
-
-**Then validate the whole channel end-to-end — no EigenOS needed.** The
-one open question is whether this firmware preserves DRAM across a warm
-reset. Prove it Linux→Linux (ONLY after the cmdline reboot above — before
-it, Linux may be using that page):
-
-```
-echo "DRAMTEST-$(date +%s)" | sudo dd of=/dev/mem bs=1 \
-    seek=$((0x3fff0000)) conv=notrunc status=none
-sudo reboot        # warm reset — no power cycle
-# after logging back in:
-sudo dd if=/dev/mem bs=1 skip=$((0x3fff0000)) count=32 status=none | cat -v
-```
-
-Sentinel survives → the crash-log channel is proven on this hardware;
-record the result (either way) in `docs/T3200-BOOT-LOG.md` and push. If
-it does NOT survive, say so loudly in the log — the post-mortem plan
-falls back to the VGA screen + beep codes only.
-
-**While rebooting anyway:** enter firmware Setup (**F2**; boot menu is
-**F10**) once and note in `docs/T3200-BOOT-LOG.md` what it offers — a
-"Legacy"/"CSM"/"Boot mode" toggle in particular. That answers which path
-the first EigenOS boot uses (see "Boot attempt order").
+Consequences:
+- **The post-mortem channels on the T3200 are the VGA screen and the
+  beep codes** (2 = fatal CPU exception, 3 = stack-canary panic). Panic
+  verdicts render on screen; photograph it.
+- **The Linux-side memmap/iomem cmdline is NOT needed — revert to a
+  clean `"quiet splash"`** if it's still set. (The escaping procedure
+  and the field-tested GRUB recovery live in docs/T3200-BOOT-LOG.md if
+  a memmap= is ever needed again; the generated-config `grep` check
+  before rebooting is mandatory.)
+- The ring itself stays in the kernel: it costs nothing, and on the dev
+  side it IS the post-mortem channel (QEMU `pmemsave` + the reader
+  script read the live/paused guest — no reboot involved).
+- Possible future revival: the F2 firmware pass may find a
+  memory-preserve / no-memory-test toggle; a CMOS panic-reason byte is
+  a cheap alternative for "which subsystem died".
 
 ### After a boot attempt
 
 Record what happened in `docs/T3200-BOOT-LOG.md` and push: which verdicts
 showed on screen (the `[mN]` board rows + the MN rows 17–19), where it
 stopped if it stopped, what a typed `6 * 7` did, and any beeps (2 = fatal
-CPU exception, 3 = stack-canary panic). If EigenOS hung or the screen was
-dead: warm-reboot into Linux and run
-
-```
-sudo tools/t3200_read_crashlog.sh
-```
-
-— it prints the full boot log back out of RAM (validated in QEMU:
-byte-faithful vs the serial log). Note: booting EigenOS again overwrites
-the previous log; read it from Linux first.
+CPU exception, 3 = stack-canary panic). Photograph the screen for the
+log — it is the only record this hardware keeps (DRAM does not survive
+the reset; see "Post-mortem channels").
 
 ### The iteration loop once booted
 
