@@ -231,7 +231,11 @@ rejects ELF64, so GRUB does the loading.
   mount. Mount-by-magic is the write authorization — a Linux disk
   never unlocks. The boot self-test probes the whole stack:
   `[m10] fs: regionfs mounted, N file(s)`.
-- [ ] **M11** — the system journal: trace tape over machine state;
+- [~] **M11** — the system journal: trace tape over machine state —
+  phase 1 landed: machine vitals are tape-recorded nondet inputs, the
+  journal persists in the store, and a rebooted machine **replays a
+  past session's readings exactly** (`ticks` answered the previous
+  boot's 2133 while the live clock stood at 4228);
   `prev of` / `state_at` against the computer itself; recovery = replay
 - [ ] **M12** — devices as `.eigs` drivers (port I/O, MMIO, IRQ callbacks
   from the language)

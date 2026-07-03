@@ -504,13 +504,42 @@ upstream, never worked around.
       deliberate non-goal until M12's .eigs drivers give a reason to
       load code from disk. With that disposition, M10's arc is
       complete.
-- [ ] **M11 — the system journal.** The trace tape as machine journal:
+- [~] **M11 — the system journal.** The trace tape as machine journal:
       `prev of` and `state_at` against system state, boot-to-now history
       as a first-class object, crash recovery as replay rather than fsck
       archaeology. Forcing yield: the trace-tape file sinks are carved
       out of the freestanding profile today; they come back targeting
       M10's store, and determinism gets pressure-tested with no host
       clock underneath (the PIT is the only time source).
+      **Phase 1 — the tape reaches the store (DONE 2026-07-03).** The
+      named forcing yield landed: upstream PR #365 (merged) exposed
+      the trace tape through the embed API — `eigs_set_trace_sink`
+      streams every record as bytes (no filesystem), `eigs_set_replay_tape`
+      installs a whole tape as the in-memory replay source, and
+      `eigs_replay_take`/`eigs_trace_record_nondet` let HOST builtins
+      participate with the runtime's own take/record contract. The
+      seam surfaced two real fixes: memory tapes never served (replay
+      gated on the FILE alone) and the strict-mismatch `_exit` became
+      reachable freestanding (the symbol gate caught it; `abort()` is
+      the HAL root there). EigenOS side: the machine vitals (`ticks`,
+      `heap_used`, `heap_mapped`, `mem_free_pages`, `gfx_ticks`,
+      `mouse_x/y/buttons`) are now tape-participating NONDET sources —
+      machine readings are inputs, recorded and replayable — and
+      `journal_on/off/replay/stop` wire the tape to the M10 store
+      ("journal" file) through the fsd, with the sink append-only into
+      a kheap buffer (never re-enters the runtime mid-eval; flushed on
+      journal_off). QEMU-PROVEN, the replayable machine's first breath:
+      a session read ticks=2133 and heap_used=42418600, journal_off
+      persisted 68 tape bytes, the GUEST REBOOTED, journal_replay
+      loaded the tape, and the same session re-derived EXACTLY
+      2133/42418600/21333 while the machine's live clock stood at 4228
+      — recovery as replay across a power cycle; journal_stop resumed
+      live readings. Contract (tidelog's, one level up): deterministic
+      given the durable input. REMAINING for M11: journal the REPL
+      input lines themselves (full-session replay without retyping),
+      auto-journal policy (always-on ring in the store?), `state_at`
+      over machine history at the REPL, and the liferaft-style chaos
+      sweep of journal replay against adversarial interleavings.
 
 ## Phase 5 — outward
 

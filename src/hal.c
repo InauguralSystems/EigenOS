@@ -153,11 +153,24 @@ void tls_init(void) {
  * just a value. The `vitals` ROM-bundle module wraps these in
  * ratio/uptime helpers. */
 #include "pmm.h"
-static EigsValue *vital_heap_used(EigsValue *a)   { (void)a; return eigs_value_new_num((double)kheap_used_bytes()); }
-static EigsValue *vital_heap_mapped(EigsValue *a) { (void)a; return eigs_value_new_num((double)kheap_mapped_bytes()); }
-static EigsValue *vital_mem_free(EigsValue *a)    { (void)a; return eigs_value_new_num((double)pmm_free_pages()); }
+
+/* M11: vitals are NONDET machine inputs — each participates in the
+ * trace tape with the take/record contract (upstream PR #365), so a
+ * journaled session replays with the RECORDED machine readings instead
+ * of live ones. tick_hz / mem_total_pages are boot constants and stay
+ * plain. */
+static EigsValue *vital_nondet(const char *name, double live) {
+    EigsValue *v;
+    if (eigs_replay_take(name, &v)) return v;
+    v = eigs_value_new_num(live);
+    eigs_trace_record_nondet(name, v);
+    return v;
+}
+static EigsValue *vital_heap_used(EigsValue *a)   { (void)a; return vital_nondet("heap_used", (double)kheap_used_bytes()); }
+static EigsValue *vital_heap_mapped(EigsValue *a) { (void)a; return vital_nondet("heap_mapped", (double)kheap_mapped_bytes()); }
+static EigsValue *vital_mem_free(EigsValue *a)    { (void)a; return vital_nondet("mem_free_pages", (double)pmm_free_pages()); }
 static EigsValue *vital_mem_total(EigsValue *a)   { (void)a; return eigs_value_new_num((double)pmm_total_pages()); }
-static EigsValue *vital_ticks(EigsValue *a)       { (void)a; return eigs_value_new_num((double)timer_ticks()); }
+static EigsValue *vital_ticks(EigsValue *a)       { (void)a; return vital_nondet("ticks", (double)timer_ticks()); }
 static EigsValue *vital_tick_hz(EigsValue *a)     { (void)a; return eigs_value_new_num((double)timer_hz()); }
 
 static void register_vitals(void) {
@@ -664,6 +677,83 @@ static void register_fs(void) {
     eigs_register_function("fs_format",      b_fs_format);
 }
 
+/* ---- M11: the machine journal ----
+ * The trace tape (upstream seam, PR #365) recorded to the M10 store.
+ * journal_on installs a byte sink that only APPENDS to a kheap buffer
+ * (the sink fires mid-eval — never re-enter the runtime from it);
+ * journal_off uninstalls the sink and writes the buffer to the store
+ * file "journal" through the fsd. journal_replay loads that file and
+ * installs it as the replay tape: every instrumented nondet builtin
+ * (ticks, heap vitals, mouse, gfx_ticks) then returns the RECORDED
+ * machine readings in order — a journaled session re-derives the same
+ * values on a different day's machine. journal_stop clears replay.
+ * Contract (tidelog's): deterministic given the durable input — replay
+ * assumes the same store state the recording ran against. */
+static char  *g_jrn_buf;
+static size_t g_jrn_len, g_jrn_cap;
+
+static void jrn_sink(const char *bytes, size_t len, void *ud) {
+    (void)ud;
+    if (g_jrn_len + len > g_jrn_cap) {
+        size_t nc = g_jrn_cap ? g_jrn_cap * 2 : 4096;
+        while (nc < g_jrn_len + len) nc *= 2;
+        char *nb = realloc(g_jrn_buf, nc);
+        if (!nb) return;                    /* full: drop (never crash) */
+        g_jrn_buf = nb;
+        g_jrn_cap = nc;
+    }
+    memcpy(g_jrn_buf + g_jrn_len, bytes, len);
+    g_jrn_len += len;
+}
+
+static EigsValue *b_journal_on(EigsValue *a) {
+    (void)a;
+    g_jrn_len = 0;
+    eigs_set_trace_sink(jrn_sink, 0);
+    serial_write("[m11] journal: recording\n");
+    return eigs_value_new_num(1);
+}
+
+static EigsValue *b_journal_off(EigsValue *a) {
+    (void)a;
+    eigs_set_trace_sink(0, 0);              /* flushes the pending line */
+    double n = (double)g_jrn_len;
+    int ok = g_jrn_len > 0 &&
+             fs_write_staged("journal", (unsigned char *)g_jrn_buf,
+                             (int)g_jrn_len, 0);
+    free(g_jrn_buf);
+    g_jrn_buf = 0;
+    g_jrn_len = g_jrn_cap = 0;
+    serial_write(ok ? "[m11] journal: written to the store\n"
+                    : "[m11] journal: NOT written (empty or store refused)\n");
+    return eigs_value_new_num(ok ? n : 0);
+}
+
+static EigsValue *b_journal_replay(EigsValue *a) {
+    (void)a;
+    int n = 0;
+    unsigned char *tape = fs_read_staged("journal", &n);
+    if (!tape) return eigs_value_new_num(0);
+    int ok = eigs_set_replay_tape((const char *)tape, (size_t)n, 0);
+    free(tape);                             /* the runtime copied it */
+    serial_write(ok ? "[m11] journal: replaying — nondet reads come from the tape\n"
+                    : "[m11] journal: replay tape rejected\n");
+    return eigs_value_new_num(ok ? (double)n : 0);
+}
+
+static EigsValue *b_journal_stop(EigsValue *a) {
+    (void)a;
+    eigs_set_replay_tape(0, 0, 0);
+    return eigs_value_new_num(1);
+}
+
+static void register_journal(void) {
+    eigs_register_function("journal_on",     b_journal_on);
+    eigs_register_function("journal_off",    b_journal_off);
+    eigs_register_function("journal_replay", b_journal_replay);
+    eigs_register_function("journal_stop",   b_journal_stop);
+}
+
 /* M9.5: pixels and a pointer — ext_gfx's second backend. The same
  * builtin names Tidepool's loop calls hosted (gfx_open/clear/rect/line/
  * point/circle/text/present/poll/ticks/delay), backed by the LFB shadow
@@ -839,7 +929,8 @@ static EigsValue *b_gfx_present(EigsValue *a) {
 static EigsValue *b_gfx_ticks(EigsValue *a) {
     (void)a;
     uint32_t hz = timer_hz(); if (!hz) hz = 100;
-    return eigs_value_new_num((double)(timer_ticks() * 1000ULL / hz));
+    return vital_nondet("gfx_ticks",
+                        (double)(timer_ticks() * 1000ULL / hz));
 }
 
 static EigsValue *b_gfx_delay(EigsValue *a) {
@@ -1118,9 +1209,9 @@ static EigsValue *b_task_eval(EigsValue *a) {
     return eigs_value_new_string(out);
 }
 
-static EigsValue *b_mouse_x(EigsValue *a)  { (void)a; return eigs_value_new_num((double)mouse_x()); }
-static EigsValue *b_mouse_y(EigsValue *a)  { (void)a; return eigs_value_new_num((double)mouse_y()); }
-static EigsValue *b_mouse_btn(EigsValue *a){ (void)a; return eigs_value_new_num((double)mouse_buttons()); }
+static EigsValue *b_mouse_x(EigsValue *a)  { (void)a; return vital_nondet("mouse_x", (double)mouse_x()); }
+static EigsValue *b_mouse_y(EigsValue *a)  { (void)a; return vital_nondet("mouse_y", (double)mouse_y()); }
+static EigsValue *b_mouse_btn(EigsValue *a){ (void)a; return vital_nondet("mouse_buttons", (double)mouse_buttons()); }
 
 static void register_gfx(void) {
     eigs_register_function("gfx_open",    b_gfx_open);
@@ -1223,6 +1314,9 @@ int eigs_run_demo(void) {
             register_fs();
             serial_write("[m10] fs builtins registered "
                          "(read/write/rename over the regionfs state)\n");
+            register_journal();
+            serial_write("[m11] journal builtins registered "
+                         "(trace tape -> the store)\n");
         }
     } else {
         g_fs_state = 0;
