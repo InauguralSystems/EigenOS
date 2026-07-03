@@ -86,9 +86,10 @@ cd EigenOS && make && make verify
 **1. USB stick via the firmware's legacy/CSM boot path — the primary
 attempt.** A 2008 EFI almost certainly ships CSM. Build the stick
 (`make usb USB=/dev/sdX` — on THIS machine only use a removable stick,
-never the internal disk), reboot into the firmware boot menu (usually F12
-or F10 on Gateways; check Setup for a "Legacy"/"CSM"/"Boot mode" toggle
-and note what you find in docs/T3200-BOOT-LOG.md). Pick the USB in legacy
+never the internal disk), reboot into the firmware boot menu — on this
+machine **Setup = F2, boot menu = F10** (confirmed by Jon); check Setup
+for a "Legacy"/"CSM"/"Boot mode" toggle and note what you find in
+docs/T3200-BOOT-LOG.md. Pick the USB in legacy
 mode → BIOS GRUB → real VGA text mode → self-test verdicts on screen →
 the REPL. This is the path where everything works as already designed.
 
@@ -185,9 +186,9 @@ record the result (either way) in `docs/T3200-BOOT-LOG.md` and push. If
 it does NOT survive, say so loudly in the log — the post-mortem plan
 falls back to the VGA screen + beep codes only.
 
-**While rebooting anyway:** enter the firmware setup / boot menu once and
-note in `docs/T3200-BOOT-LOG.md` what it offers — a "Legacy"/"CSM"/"Boot
-mode" toggle and the boot-menu key (F12/F10?). That answers which path
+**While rebooting anyway:** enter firmware Setup (**F2**; boot menu is
+**F10**) once and note in `docs/T3200-BOOT-LOG.md` what it offers — a
+"Legacy"/"CSM"/"Boot mode" toggle in particular. That answers which path
 the first EigenOS boot uses (see "Boot attempt order").
 
 ### After a boot attempt

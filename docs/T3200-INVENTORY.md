@@ -78,6 +78,8 @@ Chassis Information
 
 Firmware date (from `hostnamectl`): **2008-07-23**.
 
+Firmware keys (confirmed by Jon, 2026-07-02): **Setup = F2, boot menu = F10**.
+
 ## `grep -m1 flags /proc/cpuinfo`
 
 ```
