@@ -145,16 +145,21 @@ upstream, never worked around.
 
 ## Phase 3 — the self-observing computer
 
-- [ ] **M8 — machine vitals as observed bindings.** The first genuinely
-      new thing: expose kernel vitals (`heap_pressure` from kheap's live
-      byte count, tick jitter, IRQ rates, PMM free pages) as EigenScript
-      bindings observed like any other value, so the existing predicates
-      apply to the machine itself: `converged of heap_pressure`,
-      `diverging of tick_jitter`. Small (kheap already counts bytes) but
-      it is the moment EigenOS stops being "an OS that runs EigenScript"
-      and becomes the OS EigenScript implies. Forcing yield: how observer
-      slots bind to values produced by C-side sampling rather than
-      assignment.
+- [x] **M8 — machine vitals as observed bindings (DONE 2026-07-03).**
+      Six live kernel counters exposed as builtins from hal.c
+      (`heap_used`, `heap_mapped`, `mem_free_pages`, `mem_total_pages`,
+      `ticks`, `tick_hz`) + a bundled `vitals` module wrapping them
+      (`heap_pressure`, `mem_free_ratio`, `uptime_s`, `watch_heap`).
+      The forcing-yield question answered itself cleanly: NO new
+      observer semantics were needed — sample the vital into an ordinary
+      binding in a loop and the binding's observer slot accumulates the
+      trajectory; the vital IS just a value. Boot self-test (VGA row
+      21): 14 samples of heap_pressure → `stable of hp` = 1 — the
+      machine observes itself at every boot. REPL-verified via sendkey:
+      the typed loop, `stable of hp` → 1, `report of hp` → equilibrium,
+      `vitals.uptime_s of []` → seconds since boot. A leak now reads as
+      `improving`/`diverging` on heap_pressure long before it is a
+      crash. core2duo/3840 gate green.
 - [ ] **M9 — multitasking.** The general need: run two things at once.
       The niche answer: a task is an `EigsState` (the multi-state
       embedding API exists — docs/EMBEDDING.md upstream), scheduled

@@ -163,8 +163,10 @@ rejects ELF64, so GRUB does the loading.
   the upstream source-provider seam (EigenScript PR #362) — `import
   math` works and `import life` runs Conway's Life at the bare-metal
   REPL, no filesystem anywhere.
-- [ ] **M8** — machine vitals as observed bindings
-  (`converged of heap_pressure` as a kernel-policy primitive)
+- [x] **M8** — machine vitals as observed bindings: live kernel
+  counters as builtins + the bundled `vitals` module; a quiet heap reads
+  `stable`/`equilibrium` through the language's own observer — the
+  machine observes itself at every boot (VGA row 21).
 - [ ] **M9** — multitasking: task = `EigsState`, the scheduler as an
   observer loop (forces the runtime's real scheduler/concurrency story)
 - [ ] **M10** — storage: tidelog-style crash-recoverable log as the

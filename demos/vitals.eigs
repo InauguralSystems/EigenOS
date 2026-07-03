@@ -1,0 +1,47 @@
+# Machine vitals as observed bindings (M8) — the self-observing computer.
+#
+# The kernel exposes live counters as builtins (heap_used, heap_mapped,
+# mem_free_pages, mem_total_pages, ticks, tick_hz — registered by hal.c).
+# This module wraps them into ratios, and the OBSERVER does the rest:
+# assign a sample to a binding in a loop and the binding's trajectory is
+# measured for free —
+#
+#   import vitals
+#   hp is 0.0
+#   i is 0
+#   loop while i < 14:
+#       hp is vitals.heap_pressure of []
+#       i is i + 1
+#   stable of hp          # 1: the heap is quiet
+#   report of hp
+#
+# A leak shows up as `improving`/`diverging` on heap_pressure long before
+# it is a crash. No monitoring agent, no tax: the vital is just a value.
+
+define heap_pressure() as:
+    local mapped is heap_mapped of []
+    if mapped == 0:
+        return 0.0
+    return (heap_used of []) / mapped
+
+define mem_free_ratio() as:
+    local total is mem_total_pages of []
+    if total == 0:
+        return 0.0
+    return (mem_free_pages of []) / total
+
+define uptime_s() as:
+    local hz is tick_hz of []
+    if hz == 0:
+        return 0.0
+    return (ticks of []) / hz
+
+# Sample a vital `rounds` times into an observed binding and return the
+# last sample; the caller reads the predicates (`stable of`, etc.).
+define watch_heap(rounds) as:
+    local hp is 0.0
+    local i is 0
+    loop while i < rounds:
+        hp is heap_pressure of []
+        i is i + 1
+    return hp
