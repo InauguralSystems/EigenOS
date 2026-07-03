@@ -504,7 +504,7 @@ upstream, never worked around.
       deliberate non-goal until M12's .eigs drivers give a reason to
       load code from disk. With that disposition, M10's arc is
       complete.
-- [~] **M11 — the system journal.** The trace tape as machine journal:
+- [x] **M11 — the system journal (DONE 2026-07-03).** The trace tape as machine journal:
       `prev of` and `state_at` against system state, boot-to-now history
       as a first-class object, crash recovery as replay rather than fsck
       archaeology. Forcing yield: the trace-tape file sinks are carved
@@ -604,8 +604,28 @@ upstream, never worked around.
       composition line — a `vital_series` trajectory poured through
       an observed binding gave `report_value of hh` → "moving": the
       observer passing verdicts on the machine's own past.
-      REMAINING for M11: the liferaft-style chaos sweep of journal
-      replay against adversarial interleavings.
+      **Phase 5 — the chaos sweep (DONE 2026-07-03, closes M11).**
+      liferaft's discipline against the REAL pipeline:
+      `tools/journal_chaos.py` runs seeded cycles in QEMU — each
+      drives a fixed 8-unit session (machine readings, dependent
+      arithmetic, a multi-line define, history queries, an fs write),
+      KILLS the machine at a seed-derived moment (after unit k, with
+      seed-jittered delay; every third seed dies mid-typing), reboots,
+      replays "lastboot", and applies the TRANSCRIPT ORACLE: the
+      replayed block must equal, line for line including the recorded
+      machine readings, the prefix of the recorded transcript covering
+      exactly the units that completed before death. The crash model
+      is reduced by construction first — regionfs's double-buffered
+      commit means a recovered tape is a COMPLETE earlier ring
+      snapshot, old-or-new, never torn bytes — so the adversary's
+      remaining axis is timing, which the sweep covers at every
+      session position. 8/8 seeds clean. One finding, in the
+      HARNESS's oracle, not the pipeline: an input-less session never
+      writes the ring, so replay after a silent crash yields the last
+      NON-EMPTY session — the recorder never overwrites evidence with
+      silence; documented and asserted. With this, M11's arc is
+      complete: the machine records itself, survives its own death,
+      and answers questions about its past.
 
 ## Phase 5 — outward
 

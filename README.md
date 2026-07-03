@@ -231,7 +231,7 @@ rejects ELF64, so GRUB does the loading.
   mount. Mount-by-magic is the write authorization — a Linux disk
   never unlocks. The boot self-test probes the whole stack:
   `[m10] fs: regionfs mounted, N file(s)`.
-- [~] **M11** — the system journal: trace tape over machine state.
+- [x] **M11** — the system journal: trace tape over machine state.
   Machine vitals are tape-recorded nondet inputs, and the machine is
   **its own flight recorder**: every session auto-journals into a
   bounded ring in the store (each boot archives the previous ring as
@@ -242,7 +242,10 @@ rejects ELF64, so GRUB does the loading.
   `vital_at of ["heap_used", t]` answers what the machine's memory
   was at a past instant from a boot-to-now sampler ring, and a
   `vital_series` trajectory through an observed binding lets the
-  observer pass verdicts on the machine's own past;
+  observer pass verdicts on the machine's own past. The whole pipeline
+  is chaos-swept: seeded kill-timing cycles against real QEMU boots,
+  with a transcript oracle exact to the recorded machine readings
+  (`tools/journal_chaos.py`, 8/8 seeds);
   `prev of` / `state_at` against the computer itself; recovery = replay
 - [ ] **M12** — devices as `.eigs` drivers (port I/O, MMIO, IRQ callbacks
   from the language)
