@@ -1,0 +1,180 @@
+# Hosted twin harness for EigenOS demos/desktop.eigs (list-driven WM).
+# Stubs the kernel seams (task_* / gfx_*) in pure EigenScript, feeds the
+# WM a scripted event tape, then asserts the list state: z-order after
+# clicks, drag arithmetic + clamps, key routing to focus, repl transcript
+# via task_eval, teardown, and the observer verdict through the slot
+# dispatch (stuck reads stable, advancing does not).
+# Run from the sibling EigenScript repo root (import list needs its lib/):
+#   cd ../EigenScript && ./src/eigenscript ../EigenOS/tools/desktop_twin_hosted.eigs
+# Exits nonzero on any failure — the WM regression gate for MD work.
+
+# ---- stub state ----
+nextid is 100
+spawned is []
+prog is {}
+stuckmods is {}
+keyslog is []
+evals is []
+views is {}
+killed is 0
+fnum is 0
+tape is []
+tapei is 0
+
+# ---- kernel task seams ----
+define task_spawn(mod) as:
+    local id is nextid
+    nextid is nextid + 1
+    append of [spawned, mod]
+    local k is str of id
+    prog[k] is 1.0
+    stuckmods[k] is 0
+    if mod == "task_stuck":
+        prog[k] is 3.0
+        stuckmods[k] is 1
+    return id
+
+define task_step(id) as:
+    local k is str of id
+    if stuckmods[k] == 0:
+        prog[k] is prog[k] + 1
+    return 0
+
+define task_read(id, name) as:
+    local k is str of id
+    return prog[k]
+
+define task_view(id, x, y, w, h) as:
+    local k is str of id
+    views[k] is [x, y, w, h]
+    return 0
+
+define task_key(id, code) as:
+    append of [keyslog, [id, code]]
+    return 0
+
+define task_eval(id, src) as:
+    append of [evals, [id, src]]
+    return "42stub"
+
+define task_kill(id) as:
+    killed is killed + 1
+    return 0
+
+# ---- gfx seams (drawing is a no-op; poll/delay drive the tape) ----
+define gfx_open(w, h, title) as:
+    return 1
+
+define gfx_close(x) as:
+    return 0
+
+define gfx_rect(x, y, w, h, r, g, b) as:
+    return 0
+
+define gfx_text(x, y, s, r, g, b, size) as:
+    return 0
+
+define gfx_circle(x, y, rr, r, g, b) as:
+    return 0
+
+define gfx_clip(a, b is 0, c is 0, d is 0) as:
+    return 0
+
+define gfx_clear(r, g, b) as:
+    return 0
+
+define gfx_present(x) as:
+    return 0
+
+define gfx_delay(ms) as:
+    fnum is fnum + 1
+    return 0
+
+define gfx_poll(x) as:
+    if tapei < (len of tape):
+        local pair is tape[tapei]
+        if pair[0] <= fnum:
+            tapei is tapei + 1
+            return pair[1]
+    return null
+
+# ---- the event tape ----
+# initial spawn order: 100 counter, 101 bounce, 102 stuck, 103 repl,
+# 104 vitals; to_top(0) makes counter focused (last).
+append of [tape, [5, {"type": "mousedown", "x": 600, "y": 150}]]
+append of [tape, [6, {"type": "mousemove", "x": 700, "y": 230}]]
+append of [tape, [7, {"type": "mouseup"}]]
+append of [tape, [10, {"type": "keydown", "key": "x", "code": 120}]]
+append of [tape, [12, {"type": "mousedown", "x": 200, "y": 180}]]
+append of [tape, [14, {"type": "keydown", "key": "a", "code": 97}]]
+append of [tape, [16, {"type": "mousedown", "x": 500, "y": 470}]]
+append of [tape, [17, {"type": "mouseup"}]]
+append of [tape, [18, {"type": "keydown", "key": "6", "code": 54}]]
+append of [tape, [19, {"type": "keydown", "key": "space", "code": 32}]]
+append of [tape, [20, {"type": "keydown", "key": "*", "code": 42}]]
+append of [tape, [21, {"type": "keydown", "key": "space", "code": 32}]]
+append of [tape, [22, {"type": "keydown", "key": "7", "code": 55}]]
+append of [tape, [23, {"type": "keydown", "key": "return", "code": 13}]]
+append of [tape, [24, {"type": "mousedown", "x": 900, "y": 200}]]
+append of [tape, [25, {"type": "mousedown", "x": 30, "y": 700}]]
+append of [tape, [80, {"type": "keydown", "key": "escape", "code": 27}]]
+
+# ---- run the WM ----
+load_file of "../EigenOS/demos/desktop.eigs"
+
+# ---- assertions ----
+fails is 0
+
+define check(label, got, want) as:
+    if got == want:
+        print of ("PASS " + label)
+    if got != want:
+        fails is fails + 1
+        print of ("FAIL " + label + ": got " + (str of got) + " want " + (str of want))
+    return 0
+
+# z-order after the click sequence: stuck, bounce, counter, repl, vitals
+check of ["z0 stuck back", wins[0].id, 102]
+check of ["z1 bounce", wins[1].id, 101]
+check of ["z2 counter", wins[2].id, 100]
+check of ["z3 repl", wins[3].id, 103]
+check of ["z4 vitals focused", wins[4].id, 104]
+
+# drag moved bounce: grab at (600,150) offset (180,-14), drop pointer at
+# (700,230) -> window (520,244); record and viewport must agree
+check of ["drag x", wins[1].x, 520]
+check of ["drag y", wins[1].y, 244]
+bview is views["101"]
+check of ["view x", bview[0], 520]
+check of ["view y", bview[1], 244]
+check of ["view w", bview[2], 360]
+check of ["view h", bview[3], 240]
+
+# key routing followed focus: 'x' to bounce (focused after f5 click),
+# 'a' to counter (focused after f12 click); escape/repl keys never routed
+check of ["keylog count", len of keyslog, 2]
+check of ["key1 to bounce", keyslog[0][0], 101]
+check of ["key1 code", keyslog[0][1], 120]
+check of ["key2 to counter", keyslog[1][0], 100]
+check of ["key2 code", keyslog[1][1], 97]
+
+# the repl line assembled + evaled on the repl task, transcript updated
+check of ["eval count", len of evals, 1]
+check of ["eval on repl state", evals[0][0], 103]
+check of ["eval src", evals[0][1], "6 * 7"]
+check of ["rlines count", len of rlines, 2]
+check of ["rlines echo", rlines[0], "eigs> 6 * 7"]
+check of ["rlines result", rlines[1], "42stub"]
+check of ["rline cleared", rline, ""]
+
+# teardown killed every window
+check of ["killed all", killed, 5]
+
+# observer through the slot dispatch: the wedged task (slot 2) reads
+# stable; the advancing counter (slot 0) does not
+check of ["stuck reads stable", sample_health of [2, 102], 1]
+check of ["advancing not stable", sample_health of [0, 100], 0]
+
+print of ("HARNESS failures: " + (str of fails))
+if fails > 0:
+    throw of "desktop twin harness FAILED"
