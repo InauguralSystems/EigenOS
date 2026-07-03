@@ -252,10 +252,17 @@ upstream, never worked around.
       switch by click); key dispatch proven deterministically at the
       REPL (2× task_key + 1 step → count 21). Under TCG the desktop
       runs ~5-7 fps (cross-state evals dominate — the known M9 TCG
-      cost; real silicon is the fix, not tuning). Remaining for MD:
-      drag/resize/z-order (overlap wants damage tracking), the REPL as
-      a window (needs a task_eval seam returning strings by copy), the
-      vitals widget, a launcher, wheel routing to focus.
+      cost; real silicon is the fix, not tuning).
+      **Drag + z-order landed same day (WM-script only, zero C):**
+      title-bar drag reassigns the viewport live (`task_view` per
+      mousemove), focused window draws last and hit-tests first —
+      screendump-proven with the counter dragged over bounce, then
+      focus clicked back to bounce stacking above it. The full-redraw
+      frame makes overlap correct without damage tracking (defer
+      dirty-rects until a perf need is measured). Remaining for MD:
+      resize, the REPL as a window (needs a task_eval seam returning
+      strings by copy), the vitals widget, a launcher, wheel routing
+      to focus.
 
 ## Phase 4 — the durable, replayable machine
 

@@ -9,8 +9,10 @@
 # trajectory IS `stable` — the "task manager" every desktop bolts on
 # afterward falls out of the language for free.
 #
-#   import desktop     click focuses - keys go to the focused window
-#                      (counter: any key adds 10) - q quits
+#   import desktop     click focuses (focused window draws on top) -
+#                      drag a title bar to move a window - keys go to
+#                      the focused window (counter: any key adds 10) -
+#                      q quits
 #
 # Three windows: win_counter (draws + takes keys), win_bounce (draws,
 # always advancing), task_stuck (the M9 wedged worker, unchanged — its
@@ -29,17 +31,57 @@ define chrome(cx, cy, cw, ch, focused, stalled) as:
     gfx_rect of [cx, cy, cw, ch, 14, 16, 26]
     return 0
 
+define draw_win(id, wx, wy, ww, wh, focused, stalled, title) as:
+    chrome of [wx, wy, ww, wh, focused, stalled]
+    gfx_text of [wx + 8, wy - 18, title, 220, 226, 240, 1]
+    if stalled == 1:
+        gfx_text of [wx + ww - 66, wy - 18, "(stalled)", 255, 150, 150, 1]
+    task_step of id
+    return 0
+
+define hit(px, py, wx, wy, ww, wh) as:
+    # window rect including chrome (title bar + border)
+    if (px >= wx - 2) and (px < wx + ww + 2) and (py >= wy - 26) and (py < wy + wh + 4):
+        return 1
+    return 0
+
+define in_title(py, wy) as:
+    if (py >= wy - 26) and (py < wy):
+        return 1
+    return 0
+
+define press_at(px, py, id, wx, wy, ww, wh) as:
+    # focus on any hit; start a drag if the hit is in the title bar.
+    # f/drag/gdx/gdy are module bindings — `is` updates them outward.
+    if (hit of [px, py, wx, wy, ww, wh]) == 1:
+        f is id
+        if (in_title of [py, wy]) == 1:
+            drag is id
+            gdx is px - wx
+            gdy is py - wy
+        return 1
+    return 0
+
 ok is gfx_open of [1024, 768, "EigenOS desktop"]
 if ok == 0:
     print of "desktop: no framebuffer (text console boot)"
 if ok == 1:
     a is task_spawn of "win_counter"
-    task_view of [a, 60, 104, 300, 160]
+    xa is 60
+    ya is 104
+    task_view of [a, xa, ya, 300, 160]
     b is task_spawn of "win_bounce"
-    task_view of [b, 420, 164, 360, 240]
+    xb is 420
+    yb is 164
+    task_view of [b, xb, yb, 360, 240]
     c is task_spawn of "task_stuck"
-    task_view of [c, 120, 420, 260, 120]
+    xc is 120
+    yc is 420
+    task_view of [c, xc, yc, 260, 120]
     f is a
+    drag is 0 - 1
+    gdx is 0
+    gdy is 0
     pa is 0.0
     pb is 0.0
     pc is 0.0
@@ -54,12 +96,44 @@ if ok == 1:
                     if ev.key != "q":
                         task_key of [f, ev.code]
                 case "mousedown":
-                    if (ev.x >= 58) and (ev.x < 362) and (ev.y >= 78) and (ev.y < 266):
-                        f is a
-                    if (ev.x >= 418) and (ev.x < 782) and (ev.y >= 138) and (ev.y < 406):
-                        f is b
-                    if (ev.x >= 118) and (ev.x < 382) and (ev.y >= 394) and (ev.y < 542):
-                        f is c
+                    got is 0
+                    if f == a:
+                        got is press_at of [ev.x, ev.y, a, xa, ya, 300, 160]
+                    if f == b:
+                        got is press_at of [ev.x, ev.y, b, xb, yb, 360, 240]
+                    if f == c:
+                        got is press_at of [ev.x, ev.y, c, xc, yc, 260, 120]
+                    if got == 0:
+                        if (press_at of [ev.x, ev.y, a, xa, ya, 300, 160]) == 0:
+                            if (press_at of [ev.x, ev.y, b, xb, yb, 360, 240]) == 0:
+                                press_at of [ev.x, ev.y, c, xc, yc, 260, 120]
+                case "mousemove":
+                    if drag == a:
+                        xa is ev.x - gdx
+                        ya is ev.y - gdy
+                        if ya < 34:
+                            ya is 34
+                        if xa < 4:
+                            xa is 4
+                        task_view of [a, xa, ya, 300, 160]
+                    if drag == b:
+                        xb is ev.x - gdx
+                        yb is ev.y - gdy
+                        if yb < 34:
+                            yb is 34
+                        if xb < 4:
+                            xb is 4
+                        task_view of [b, xb, yb, 360, 240]
+                    if drag == c:
+                        xc is ev.x - gdx
+                        yc is ev.y - gdy
+                        if yc < 34:
+                            yc is 34
+                        if xc < 4:
+                            xc is 4
+                        task_view of [c, xc, yc, 260, 120]
+                case "mouseup":
+                    drag is 0 - 1
             ev is gfx_poll of null
 
         # health through the observer: sample each window's progress
@@ -70,20 +144,21 @@ if ok == 1:
         sb is stable of pb
         sc is stable of pc
 
-        # frame: desktop, chrome, then each window draws itself
+        # frame: desktop, then windows back-to-front (focused on top)
         gfx_clear of [8, 9, 14]
         gfx_text of [12, 8, "EigenOS -- windows are observed bindings (q quits)", 150, 160, 190, 2]
-        chrome of [60, 104, 300, 160, f == a, sa]
-        gfx_text of [68, 86, "counter", 220, 226, 240, 1]
-        chrome of [420, 164, 360, 240, f == b, sb]
-        gfx_text of [428, 146, "bounce", 220, 226, 240, 1]
-        chrome of [120, 420, 260, 120, f == c, sc]
-        gfx_text of [128, 402, "stuck worker", 220, 226, 240, 1]
-        if sc == 1:
-            gfx_text of [216, 402, "(stalled)", 255, 120, 120, 1]
-        task_step of a
-        task_step of b
-        task_step of c
+        if f == a:
+            draw_win of [b, xb, yb, 360, 240, 0, sb, "bounce"]
+            draw_win of [c, xc, yc, 260, 120, 0, sc, "stuck worker"]
+            draw_win of [a, xa, ya, 300, 160, 1, sa, "counter"]
+        if f == b:
+            draw_win of [a, xa, ya, 300, 160, 0, sa, "counter"]
+            draw_win of [c, xc, yc, 260, 120, 0, sc, "stuck worker"]
+            draw_win of [b, xb, yb, 360, 240, 1, sb, "bounce"]
+        if f == c:
+            draw_win of [a, xa, ya, 300, 160, 0, sa, "counter"]
+            draw_win of [b, xb, yb, 360, 240, 0, sb, "bounce"]
+            draw_win of [c, xc, yc, 260, 120, 1, sc, "stuck worker"]
         gfx_present of null
         gfx_delay of 25
     task_kill of a
