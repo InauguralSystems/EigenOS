@@ -182,8 +182,11 @@ rejects ELF64, so GRUB does the loading.
 - [~] **MD** — the desktop, phase 1 done: windows are observed
   bindings — `import desktop` runs a window manager written in
   EigenScript (window = task = `EigsState`, viewport-clipped drawing,
-  click focus, key dispatch across states), and a hung window's title
-  turns red because `stable of` its progress trajectory says so.
+  click focus + drag + z-order, key dispatch across states), a hung
+  window's title turns red because `stable of` its progress trajectory
+  says so, and the **REPL is a window**: lines typed into it evaluate
+  on that window's own isolated `EigsState` (`task_eval`, strings by
+  copy) — quit the desktop and its bindings are gone.
 - [x] **M7.5** — the machine has software: the EigenScript stdlib (67
   modules) + demos baked into the image as a ROM bundle, served through
   the upstream source-provider seam (EigenScript PR #362) — `import

@@ -1,0 +1,12 @@
+# MD: the REPL window's home state. The WM owns the input line and
+# sends each entered line here via task_eval — `x is 5` typed into this
+# window binds x HERE, isolated from every other window and from the
+# boot console REPL: a REPL window is a machine state you can look at.
+# step() is just the health heartbeat the WM's observer reads. You can
+# redefine step from inside the window — it is your state; if you break
+# it, the window dies by the task-error rule, which is fair.
+progress is 0.0
+
+define step() as:
+    progress is progress + 1
+    return progress

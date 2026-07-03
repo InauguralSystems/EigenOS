@@ -259,10 +259,24 @@ upstream, never worked around.
       screendump-proven with the counter dragged over bounce, then
       focus clicked back to bounce stacking above it. The full-redraw
       frame makes overlap correct without damage tracking (defer
-      dirty-rects until a perf need is measured). Remaining for MD:
-      resize, the REPL as a window (needs a task_eval seam returning
-      strings by copy), the vitals widget, a launcher, wheel routing
-      to focus.
+      dirty-rects until a perf need is measured).
+      **The REPL as a window (DONE 2026-07-03).** The seam:
+      `task_eval [id, "src"]` — the WM sends a typed line to a window
+      task's state (idle between steps, so it is the same outside-in
+      eval task_step does — no VM nesting) and the result comes back
+      formatted as a BY-VALUE string; the cross-state rule extends
+      from numbers to copied strings, never pointers. Plus
+      hosted-parity `gfx_clip` so the WM can render the transcript
+      bounded to the window rect. The WM owns the input line (it owns
+      key events anyway); `demos/win_repl.eigs` is just the home
+      state + heartbeat. Typed `gfx_*` INSIDE the window draws into
+      that window's viewport (g_active_task is set during the eval).
+      QEMU-proven: `x is 5` → 5, `x * 8` → 40 in the window, and after
+      quitting, `x` at the boot console is UNDEFINED — a REPL window
+      is an isolated machine state you can look at. ESC now quits the
+      desktop (q is typeable text). Remaining for MD: resize, the
+      vitals widget, a launcher, wheel routing to focus, multi-line
+      (`:`-block) input in REPL windows.
 
 ## Phase 4 — the durable, replayable machine
 

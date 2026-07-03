@@ -341,14 +341,26 @@ static int arg_list_min(EigsValue *a, int n) {
 
 static int g_gfx_open;
 
+/* WM clip (hosted-parity gfx_clip): lets the primary state draw
+ * window CONTENT safely bounded — e.g. the REPL window's transcript,
+ * which the WM renders on the repl task's behalf. */
+static int g_wm_clip_on, g_wm_clip[4];
+
 /* The drawing context (MD): who is drawing decides where the marks
- * land. Primary = the whole screen, clip reset. A task mid-step =
- * translated into and clipped to its viewport — a window's content
- * cannot escape the window. A task with NO viewport draws nowhere
- * (zero-area clip). Returns the coordinate offset to apply. */
+ * land. Primary = the whole screen (or its gfx_clip rectangle if one
+ * is set). A task mid-step = translated into and clipped to its
+ * viewport — a window's content cannot escape the window. A task with
+ * NO viewport draws nowhere (zero-area clip). Returns the coordinate
+ * offset to apply. */
 static void gfx_ctx(int *ox, int *oy) {
     *ox = 0; *oy = 0;
-    if (g_active_task < 0) { fb_gfx_clip_reset(); return; }
+    if (g_active_task < 0) {
+        if (g_wm_clip_on)
+            fb_gfx_clip(g_wm_clip[0], g_wm_clip[1], g_wm_clip[2], g_wm_clip[3]);
+        else
+            fb_gfx_clip_reset();
+        return;
+    }
     if (g_tasks[g_active_task].has_view) {
         *ox = g_tasks[g_active_task].vx;
         *oy = g_tasks[g_active_task].vy;
@@ -476,6 +488,23 @@ static EigsValue *b_gfx_delay(EigsValue *a) {
 
 static EigsValue *b_gfx_title(EigsValue *a) {
     (void)a;                                     /* no window to retitle */
+    return eigs_value_new_null();
+}
+
+/* gfx_clip of [x,y,w,h] / gfx_clip of null — hosted ext_gfx parity.
+ * Meaningful from the primary state (the WM bounding its own drawing);
+ * a task is always viewport-clipped and cannot widen that. */
+static EigsValue *b_gfx_clip(EigsValue *a) {
+    if (g_active_task >= 0) return eigs_value_new_null();
+    if (arg_list_min(a, 4)) {
+        g_wm_clip[0] = (int)list_num(a, 0);
+        g_wm_clip[1] = (int)list_num(a, 1);
+        g_wm_clip[2] = (int)list_num(a, 2);
+        g_wm_clip[3] = (int)list_num(a, 3);
+        g_wm_clip_on = 1;
+    } else {
+        g_wm_clip_on = 0;
+    }
     return eigs_value_new_null();
 }
 
@@ -650,6 +679,59 @@ static EigsValue *b_win_h(EigsValue *a) {
                                   ? (double)g_tasks[id].vh : 0);
 }
 
+/* task_eval [id, "src"] — evaluate a line on a WINDOW'S OWN state and
+ * return the result formatted as a string (copied across the state
+ * boundary byte-by-byte — the cross-state rule extends from numbers
+ * to by-value strings, never pointers). This is the REPL-as-a-window
+ * seam: the WM owns the input line, the window owns the bindings.
+ * The task's state is idle between steps, so this is the same
+ * outside-in eval task_spawn/task_step already do — no VM nesting.
+ * g_active_task is set during the eval: a typed `gfx_circle of [...]`
+ * draws INTO that window, clipped, like everything else it runs. */
+static EigsValue *b_task_eval(EigsValue *a) {
+    if (!arg_list_min(a, 2)) return eigs_value_new_string("");
+    EigsValue *idv = eigs_value_list_get(a, 0);
+    int id = task_id_of(idv);
+    if (idv) eigs_value_release(idv);
+    char src[512];
+    list_str(a, 1, src, sizeof src);
+    if (id < 0 || !src[0]) return eigs_value_new_string("");
+
+    char out[256];
+    out[0] = 0;
+    eigs_thread_switch(g_tasks[id].st);
+    g_active_task = id;
+    EigsValue *v = eigs_eval_string(src);
+    if (eigs_has_error()) {
+        snprintf(out, sizeof out, "error: %s", eigs_last_error_message());
+        eigs_clear_error();
+    } else if (v) {
+        switch (eigs_value_type(v)) {
+        case EIGS_TYPE_NUM:
+            snprintf(out, sizeof out, "%g", eigs_value_as_num(v));
+            break;
+        case EIGS_TYPE_STR:
+            snprintf(out, sizeof out, "%s", eigs_value_as_string(v));
+            break;
+        case EIGS_TYPE_NULL:
+            break;
+        default:
+            snprintf(out, sizeof out, "<value>");
+            break;
+        }
+    }
+    if (v) eigs_value_release(v);               /* released on the TASK state */
+    g_active_task = -1;
+    eigs_thread_switch(g_primary);
+    if (!stack_canary_ok()) {
+        con_write("PANIC: boot-stack overflow (canary trampled by a "
+                  "window eval). Halting.\n");
+        speaker_beeps(3);
+        for (;;) __asm__ volatile ("cli; hlt");
+    }
+    return eigs_value_new_string(out);
+}
+
 static EigsValue *b_mouse_x(EigsValue *a)  { (void)a; return eigs_value_new_num((double)mouse_x()); }
 static EigsValue *b_mouse_y(EigsValue *a)  { (void)a; return eigs_value_new_num((double)mouse_y()); }
 static EigsValue *b_mouse_btn(EigsValue *a){ (void)a; return eigs_value_new_num((double)mouse_buttons()); }
@@ -676,6 +758,8 @@ static void register_gfx(void) {
     /* MD: the WM's window seams (meaningful from the primary state) */
     eigs_register_function("task_view", b_task_view);
     eigs_register_function("task_key",  b_task_key);
+    eigs_register_function("task_eval", b_task_eval);
+    eigs_register_function("gfx_clip",  b_gfx_clip);
 }
 
 /* What a WINDOW task can call: draw (viewport-bound), read its size,

@@ -12,11 +12,16 @@
 #   import desktop     click focuses (focused window draws on top) -
 #                      drag a title bar to move a window - keys go to
 #                      the focused window (counter: any key adds 10) -
-#                      q quits
+#                      the repl window is a real EigenScript REPL on
+#                      its own isolated EigsState - ESC quits
 #
-# Three windows: win_counter (draws + takes keys), win_bounce (draws,
-# always advancing), task_stuck (the M9 wedged worker, unchanged — its
-# title bar turns red because its progress reads stable).
+# Windows: win_counter (draws + takes keys), win_bounce (always
+# advancing), task_stuck (the M9 wedged worker — its title turns red
+# because its progress reads stable), win_repl (type into it: the WM
+# edits the line, task_eval runs it on the window's own state and the
+# result comes back as a by-value string).
+
+import list
 
 define chrome(cx, cy, cw, ch, focused, stalled) as:
     # border ring + title bar + content backdrop for one window
@@ -37,6 +42,21 @@ define draw_win(id, wx, wy, ww, wh, focused, stalled, title) as:
     if stalled == 1:
         gfx_text of [wx + ww - 66, wy - 18, "(stalled)", 255, 150, 150, 1]
     task_step of id
+    return 0
+
+define draw_repl(wx, wy, ww, wh, focused, stalled) as:
+    # the WM renders the transcript on the repl window's behalf,
+    # clipped to the window rect (hosted-parity gfx_clip)
+    chrome of [wx, wy, ww, wh, focused, stalled]
+    gfx_text of [wx + 8, wy - 18, "repl -- its own EigsState", 220, 226, 240, 1]
+    gfx_clip of [wx, wy, ww, wh]
+    local i is 0
+    for tl in rlines:
+        gfx_text of [wx + 6, wy + 6 + i * 16, tl, 185, 205, 185, 1]
+        i is i + 1
+    gfx_text of [wx + 6, wy + 6 + i * 16, "eigs> " + rline + "_", 240, 240, 255, 1]
+    gfx_clip of null
+    task_step of r
     return 0
 
 define hit(px, py, wx, wy, ww, wh) as:
@@ -78,6 +98,12 @@ if ok == 1:
     xc is 120
     yc is 420
     task_view of [c, xc, yc, 260, 120]
+    r is task_spawn of "win_repl"
+    xr is 480
+    yr is 486
+    task_view of [r, xr, yr, 480, 220]
+    rline is ""
+    rlines is []
     f is a
     drag is 0 - 1
     gdx is 0
@@ -85,16 +111,35 @@ if ok == 1:
     pa is 0.0
     pb is 0.0
     pc is 0.0
+    pr is 0.0
     running is 1
     loop while running == 1:
         ev is gfx_poll of null
         loop while ev != null:
             match ev.type:
                 case "keydown":
-                    if ev.key == "q":
+                    if ev.key == "escape":
                         running is 0
-                    if ev.key != "q":
-                        task_key of [f, ev.code]
+                    if f == r:
+                        if (ev.code >= 32) and (ev.code < 127):
+                            if (len of rline) < 52:
+                                rline is rline + (chr of ev.code)
+                        if ev.key == "backspace":
+                            n is len of rline
+                            if n > 0:
+                                rline is substr of [rline, 0, n - 1]
+                        if ev.key == "return":
+                            if (len of rline) > 0:
+                                append of [rlines, "eigs> " + rline]
+                                res is task_eval of [r, rline]
+                                if (len of res) > 0:
+                                    append of [rlines, res]
+                                loop while (len of rlines) > 11:
+                                    rlines is list.drop of [rlines, 1]
+                                rline is ""
+                    if f != r:
+                        if ev.key != "escape":
+                            task_key of [f, ev.code]
                 case "mousedown":
                     got is 0
                     if f == a:
@@ -103,10 +148,13 @@ if ok == 1:
                         got is press_at of [ev.x, ev.y, b, xb, yb, 360, 240]
                     if f == c:
                         got is press_at of [ev.x, ev.y, c, xc, yc, 260, 120]
+                    if f == r:
+                        got is press_at of [ev.x, ev.y, r, xr, yr, 480, 220]
                     if got == 0:
                         if (press_at of [ev.x, ev.y, a, xa, ya, 300, 160]) == 0:
                             if (press_at of [ev.x, ev.y, b, xb, yb, 360, 240]) == 0:
-                                press_at of [ev.x, ev.y, c, xc, yc, 260, 120]
+                                if (press_at of [ev.x, ev.y, c, xc, yc, 260, 120]) == 0:
+                                    press_at of [ev.x, ev.y, r, xr, yr, 480, 220]
                 case "mousemove":
                     if drag == a:
                         xa is ev.x - gdx
@@ -132,6 +180,14 @@ if ok == 1:
                         if xc < 4:
                             xc is 4
                         task_view of [c, xc, yc, 260, 120]
+                    if drag == r:
+                        xr is ev.x - gdx
+                        yr is ev.y - gdy
+                        if yr < 34:
+                            yr is 34
+                        if xr < 4:
+                            xr is 4
+                        task_view of [r, xr, yr, 480, 220]
                 case "mouseup":
                     drag is 0 - 1
             ev is gfx_poll of null
@@ -140,29 +196,40 @@ if ok == 1:
         pa is task_read of [a, "progress"]
         pb is task_read of [b, "progress"]
         pc is task_read of [c, "progress"]
+        pr is task_read of [r, "progress"]
         sa is stable of pa
         sb is stable of pb
         sc is stable of pc
+        sr is stable of pr
 
         # frame: desktop, then windows back-to-front (focused on top)
         gfx_clear of [8, 9, 14]
-        gfx_text of [12, 8, "EigenOS -- windows are observed bindings (q quits)", 150, 160, 190, 2]
+        gfx_text of [12, 8, "EigenOS -- windows are observed bindings (esc quits)", 150, 160, 190, 2]
         if f == a:
             draw_win of [b, xb, yb, 360, 240, 0, sb, "bounce"]
             draw_win of [c, xc, yc, 260, 120, 0, sc, "stuck worker"]
+            draw_repl of [xr, yr, 480, 220, 0, sr]
             draw_win of [a, xa, ya, 300, 160, 1, sa, "counter"]
         if f == b:
             draw_win of [a, xa, ya, 300, 160, 0, sa, "counter"]
             draw_win of [c, xc, yc, 260, 120, 0, sc, "stuck worker"]
+            draw_repl of [xr, yr, 480, 220, 0, sr]
             draw_win of [b, xb, yb, 360, 240, 1, sb, "bounce"]
         if f == c:
             draw_win of [a, xa, ya, 300, 160, 0, sa, "counter"]
             draw_win of [b, xb, yb, 360, 240, 0, sb, "bounce"]
+            draw_repl of [xr, yr, 480, 220, 0, sr]
             draw_win of [c, xc, yc, 260, 120, 1, sc, "stuck worker"]
+        if f == r:
+            draw_win of [a, xa, ya, 300, 160, 0, sa, "counter"]
+            draw_win of [b, xb, yb, 360, 240, 0, sb, "bounce"]
+            draw_win of [c, xc, yc, 260, 120, 0, sc, "stuck worker"]
+            draw_repl of [xr, yr, 480, 220, 1, sr]
         gfx_present of null
         gfx_delay of 25
     task_kill of a
     task_kill of b
     task_kill of c
+    task_kill of r
     gfx_close of null
     print of "desktop: closed"
