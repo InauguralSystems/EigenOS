@@ -23,6 +23,7 @@
 #include "vga.h"
 #include "fb.h"
 #include "mouse.h"
+#include "ata.h"
 #include "eigs_embed.h"        /* from EigenScript/src, via -I in the Makefile */
 
 /* Console fan-out: serial always (headless log); VGA once the REPL owns
@@ -302,6 +303,97 @@ static void register_tasks(void) {
     eigs_register_function("task_read",  b_task_read);
     eigs_register_function("task_alive", b_task_alive);
     eigs_register_function("task_kill",  b_task_kill);
+}
+
+/* ---- M10: the block device, EigenScript-visible ----
+ * Mechanism in ata.c; POLICY lives up here and in script. Sectors
+ * travel as lists of 512 byte numbers — the embed API has no buffer
+ * surface yet (that is phase 2's upstream ask; tidelog's data path is
+ * buffer-based). blk_write REFUSES until blk_unlock has been called
+ * once this boot: on the T3200 the primary disk carries the Linux
+ * install, so a fat-fingered REPL line must not be able to write.
+ * Nothing in the kernel ever unlocks by itself; the store's mount
+ * code does, after verifying the tidelog magic. */
+static double list_num(EigsValue *l, int i);      /* defined below (M9.5) */
+static int arg_list_min(EigsValue *a, int n);
+static int g_blk_unlocked;
+
+static EigsValue *b_blk_present(EigsValue *a) {
+    (void)a;
+    return eigs_value_new_num(ata_present() ? 1 : 0);
+}
+
+static EigsValue *b_blk_sectors(EigsValue *a) {
+    (void)a;
+    return eigs_value_new_num((double)ata_sectors());
+}
+
+static EigsValue *b_blk_model(EigsValue *a) {
+    (void)a;
+    return eigs_value_new_string(ata_present() ? ata_model() : "");
+}
+
+static EigsValue *b_blk_unlock(EigsValue *a) {
+    (void)a;
+    g_blk_unlocked = 1;
+    serial_write("[m10] blk: WRITES UNLOCKED for this boot\n");
+    return eigs_value_new_num(1);
+}
+
+static EigsValue *b_blk_read(EigsValue *a) {   /* lba -> 512 nums | null */
+    if (!a || eigs_value_type(a) != EIGS_TYPE_NUM) return eigs_value_new_null();
+    double d = eigs_value_as_num(a);
+    if (d < 0) return eigs_value_new_null();
+    uint8_t buf[512];
+    if (!ata_read((uint64_t)d, buf)) return eigs_value_new_null();
+    EigsValue *l = eigs_value_new_list(512);
+    for (int i = 0; i < 512; i++) {
+        EigsValue *n = eigs_value_new_num((double)buf[i]);
+        eigs_value_list_append(l, n);
+        eigs_value_release(n);
+    }
+    return l;
+}
+
+static EigsValue *b_blk_write(EigsValue *a) {  /* [lba, 512 nums] -> 1|0 */
+    if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
+    if (!g_blk_unlocked) {
+        serial_write("[m10] blk_write REFUSED: writes locked (blk_unlock first)\n");
+        return eigs_value_new_num(0);
+    }
+    double lba = list_num(a, 0);
+    if (lba < 0) return eigs_value_new_num(0);
+    EigsValue *data = eigs_value_list_get(a, 1);
+    if (!data || eigs_value_type(data) != EIGS_TYPE_LIST ||
+        eigs_value_list_len(data) != 512) {
+        if (data) eigs_value_release(data);
+        return eigs_value_new_num(0);
+    }
+    uint8_t buf[512];
+    for (int i = 0; i < 512; i++) {
+        EigsValue *item = eigs_value_list_get(data, i);
+        double b = (item && eigs_value_type(item) == EIGS_TYPE_NUM)
+                       ? eigs_value_as_num(item) : 0.0;
+        if (item) eigs_value_release(item);
+        buf[i] = (uint8_t)b;
+    }
+    eigs_value_release(data);
+    return eigs_value_new_num(ata_write((uint64_t)lba, buf) ? 1 : 0);
+}
+
+static EigsValue *b_blk_flush(EigsValue *a) {
+    (void)a;
+    return eigs_value_new_num(ata_flush() ? 1 : 0);
+}
+
+static void register_blk(void) {
+    eigs_register_function("blk_present", b_blk_present);
+    eigs_register_function("blk_sectors", b_blk_sectors);
+    eigs_register_function("blk_model",   b_blk_model);
+    eigs_register_function("blk_read",    b_blk_read);
+    eigs_register_function("blk_write",   b_blk_write);
+    eigs_register_function("blk_unlock",  b_blk_unlock);
+    eigs_register_function("blk_flush",   b_blk_flush);
 }
 
 /* M9.5: pixels and a pointer — ext_gfx's second backend. The same
@@ -839,6 +931,8 @@ int eigs_run_demo(void) {
     g_primary = st;
     register_tasks();
     serial_write("[m9] task builtins registered (spawn/step/read/alive/kill)\n");
+    register_blk();
+    serial_write("[m10] block builtins registered (blk_read/write locked)\n");
     register_gfx();
     serial_write("[m9.5] gfx builtins registered (fb shadow + PS/2 pointer)\n");
 

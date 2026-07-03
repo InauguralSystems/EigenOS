@@ -20,6 +20,7 @@
 #include "vga.h"
 #include "fb.h"
 #include "mouse.h"
+#include "ata.h"
 
 extern int  eigs_run_demo(void);  /* src/hal.c — drives the runtime (SSE side) */
 extern void eigs_repl(void);      /* src/hal.c — interactive REPL, never returns */
@@ -360,6 +361,27 @@ void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
     } else {
         put_at(15, 0, "timer: IRQ0 NOT firing FAILED", 0x4F);
         serial_write("[m4] timer self-test: FAILED (no IRQ0)\n");
+    }
+
+    /* --- M10: the block device (ATA PIO probe; READ-ONLY self-test —
+     * nothing in the boot path ever writes: the T3200's disk carries
+     * the Linux install this machine dual-boots from). Absent disk is
+     * a valid configuration, reported honestly, never a hang. */
+    ata_init();
+    if (ata_present()) {
+        uint8_t sec0[512];
+        int rd = ata_read(0, sec0);
+        serial_write("[m10] ata disk: ");
+        serial_write(ata_model());
+        serial_write(", ");
+        serial_write_dec(ata_sectors());
+        serial_write(" sectors; read LBA 0 ");
+        serial_write(rd ? "OK\n" : "FAILED\n");
+        put_at(11, 0, rd ? "ata: disk identified + read OK"
+                         : "ata: disk read FAILED", rd ? 0x0A : 0x4F);
+    } else {
+        serial_write("[m10] ata: no disk (block device absent)\n");
+        put_at(11, 0, "ata: no disk attached", 0x07);
     }
 
     /* --- M5: run the EigenScript runtime freestanding on this kernel --- */

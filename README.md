@@ -215,8 +215,11 @@ rejects ELF64, so GRUB does the loading.
   E0 keys (arrows/home/end/delete), keyup events + modifiers, the
   IntelliMouse wheel, and REPL line editing with a visible cursor and
   up/down history.
-- [ ] **M10** — storage: tidelog-style crash-recoverable log as the
-  filesystem, over an ATA driver
+- [~] **M10** — storage: tidelog-style crash-recoverable log as the
+  filesystem, over an ATA driver. Phase 1 landed: polled ATA PIO
+  (LBA48, bounded waits, ATAPI skipped) + `blk_*` builtins at the
+  REPL — a written sector survives a guest reboot; writes are locked
+  until an explicit `blk_unlock` (the T3200's disk carries Linux)
 - [ ] **M11** — the system journal: trace tape over machine state;
   `prev of` / `state_at` against the computer itself; recovery = replay
 - [ ] **M12** — devices as `.eigs` drivers (port I/O, MMIO, IRQ callbacks

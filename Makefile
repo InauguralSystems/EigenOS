@@ -38,7 +38,8 @@ EIGS_OBJS := $(addprefix build/eigs_,$(addsuffix .o,$(EIGS_SRCS))) \
 OBJS   := build/boot.o build/kernel.o build/pmm.o build/serial.o \
           build/idt.o build/isr.o build/paging.o build/pic.o \
           build/timer.o build/keyboard.o build/kheap.o build/vga.o \
-          build/fb.o build/mouse.o build/crashlog.o build/bundle.o
+          build/fb.o build/mouse.o build/crashlog.o build/ata.o \
+          build/bundle.o
 
 # The ROM bundle (M7.5): the EigenScript stdlib + demos/ baked into the
 # image, served via the eigs_set_source_provider seam — `import` on bare
@@ -55,7 +56,7 @@ build:
 build/boot.o: src/boot.S | build
 	$(CC) -m64 -c $< -o $@
 
-build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h src/paging.h src/pic.h src/timer.h src/keyboard.h src/kheap.h src/stackguard.h src/crashlog.h src/vga.h src/fb.h src/mouse.h | build
+build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h src/paging.h src/pic.h src/timer.h src/keyboard.h src/kheap.h src/stackguard.h src/crashlog.h src/vga.h src/fb.h src/mouse.h src/ata.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/pmm.o: src/pmm.c src/pmm.h src/multiboot2.h src/crashlog.h | build
@@ -83,6 +84,9 @@ build/keyboard.o: src/keyboard.c src/keyboard.h src/mouse.h src/io.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/mouse.o: src/mouse.c src/mouse.h src/io.h | build
+	$(CC) $(CFLAGS) $< -o $@
+
+build/ata.o: src/ata.c src/ata.h src/io.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 # The fb console's font is EigenScript's own gfx_text font, extracted
@@ -119,7 +123,7 @@ build/eigsfs_%.o: $(EIGS)/src/freestanding/%.c | build
 
 # The HAL glue: runtime cflags (SSE) so variadic FP + the double return
 # from eigs_value_as_num are handled; -Isrc for the kernel headers.
-build/hal.o: src/hal.c src/kheap.h src/serial.h src/timer.h src/keyboard.h src/vga.h src/fb.h src/mouse.h src/stackguard.h | build
+build/hal.o: src/hal.c src/kheap.h src/serial.h src/timer.h src/keyboard.h src/vga.h src/fb.h src/mouse.h src/ata.h src/stackguard.h | build
 	$(CC) $(RT_CFLAGS) -Isrc $< -o $@
 
 $(KERNEL): $(OBJS) $(EIGS_OBJS) linker.ld
@@ -162,6 +166,22 @@ run-headless: $(ISO)
 serial: $(ISO)
 	$(QEMU) $(QFLAGS) -cdrom $(ISO) -serial stdio -display none -no-reboot
 
+# M10: a scratch disk for the block layer (raw, 64 MiB = 131072 sectors).
+# `make clean` removes it — persistence testing within a session survives
+# reboots of the GUEST, which is the contract that matters. QEMU attaches
+# it as primary master; -boot d keeps the CD as the boot device.
+DISK := build/tidelog.img
+DISKARGS := -drive file=$(DISK),format=raw,index=0,media=disk -boot d
+
+$(DISK): | build
+	qemu-img create -f raw $(DISK) 64M
+
+disk: $(DISK)
+
+# `make serial` with the scratch disk attached (the M10 dev loop).
+serial-disk: $(ISO) $(DISK)
+	$(QEMU) $(QFLAGS) -cdrom $(ISO) $(DISKARGS) -serial stdio -display none -no-reboot
+
 # Boot headless, wait for the kernel, dump the first 6 VGA text rows out of
 # the live guest via the QEMU monitor, then quit. The 0x-prefixed bytes are
 # (char, attr) pairs — chars are every other byte.
@@ -180,4 +200,4 @@ shot: $(ISO)
 clean:
 	rm -rf build
 
-.PHONY: all verify iso run run-headless serial dump shot clean
+.PHONY: all verify iso run run-headless serial disk serial-disk dump shot clean

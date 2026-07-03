@@ -376,7 +376,7 @@ upstream, never worked around.
 
 ## Phase 4 — the durable, replayable machine
 
-- [ ] **M10 — storage: tidelog as the filesystem.** The general need:
+- [~] **M10 — storage: tidelog as the filesystem.** The general need:
       files that survive a reboot. The niche answer: a log-structured,
       crash-recoverable store with time-travel reads (tidelog proved the
       whole design hosted — CBOR codec, every-offset crash sweep,
@@ -387,6 +387,31 @@ upstream, never worked around.
       Forcing yield: the durability primitives (#248–250) re-proven with
       no OS underneath; what `import` means when the "filesystem" is a
       replayable log.
+      **Phase 1 — the block substrate (DONE 2026-07-03).** `src/ata.c`:
+      polled ATA PIO, no IRQ path at all (nIEN held, IRQ14/15 stay
+      masked), one sector per command, every wait iteration-bounded so
+      a dead drive FAILS the verdict instead of hanging the boot.
+      LBA48 when the identify advertises it (the T3200's 320GB spinner
+      needs it past 128GiB), LBA28 fallback; ATAPI devices (the boot
+      CD) recognized by signature and skipped. EigenScript-visible:
+      `blk_present/sectors/model/read/write/unlock/flush` — sectors
+      travel as lists of 512 byte numbers for now (the embed API has
+      no buffer surface; adding one upstream is phase 2's first move,
+      since tidelog's data path is buffer-based). SAFETY BAKED IN:
+      the boot self-test is READ-ONLY (identify + LBA 0), and
+      `blk_write` refuses until an explicit `blk_unlock` that boot —
+      on the T3200 the primary disk carries the Linux install; the
+      store's mount code will unlock only after verifying the tidelog
+      magic, and nothing ever auto-formats. Proven: `make serial-disk`
+      (64MiB scratch image) → write a 512-byte pattern to sector 100,
+      flush, REBOOT THE GUEST, read it back intact before any unlock
+      — bytes survive a reboot for the first time; the fresh boot's
+      locked `blk_write` refused loudly; no-disk boot reports a clean
+      absent verdict; core2duo/3840/smp2 gate green, zero post-Merom
+      instructions. NEXT: buffer embed API upstream → a byte-region
+      layer with tidelog's file-shaped seam (`read_bytes_buf`,
+      append-mode `write_bytes`, atomic `rename`) → the store mounted
+      on it.
 - [ ] **M11 — the system journal.** The trace tape as machine journal:
       `prev of` and `state_at` against system state, boot-to-now history
       as a first-class object, crash recovery as replay rather than fsck
