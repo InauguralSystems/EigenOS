@@ -22,7 +22,9 @@ The end state, in three layers (each useful if we stop there):
 1. **The EigenScript machine** — boot → REPL → `define` → the machine does
    it. One language as shell, userland, and services; no impedance layer
    between using the computer and programming it (the Lisp-machine /
-   Oberon lineage).
+   Oberon lineage). Its finished form is **the desktop (MD)** — general
+   purpose in the personal-computer sense: a screen with your things on
+   it, several alive at once, all of it written in EigenScript.
 2. **The self-observing computer** — the observer extended from program
    bindings to *machine* bindings: heap pressure, tick jitter, IRQ rates
    as observed values, so `converged of heap_pressure` is a kernel-policy
@@ -123,6 +125,20 @@ upstream, never worked around.
       machines are USB hosts; a bridge cable would need a full USB host
       stack in EigenOS).
 
+- [ ] **M7.5 — the machine has software.** The freestanding profile
+      carves out `load_file`/`import`, so the bare-metal REPL has no
+      stdlib and can run nothing it didn't just type. Fix: a **ROM
+      bundle** — embed `lib/*.eigs` + chosen portfolio programs in the
+      kernel image at build time and resolve `import` from it (the
+      Lisp-machine answer: the image IS the software). Upstream forcing
+      yield: the freestanding profile needs a pluggable **source-provider
+      seam** in the embed API ("give me the text of module X" without a
+      filesystem) — a clean primitive EigenScript lacks; M10's real
+      filesystem later re-backs the same seam, so nothing is throwaway.
+      Demo: `import list` at the bare-metal REPL; **dynamics' `life.eigs`
+      running on the VGA console** — real software, written elsewhere,
+      running on the machine.
+
 ## Phase 3 — the self-observing computer
 
 - [ ] **M8 — machine vitals as observed bindings.** The first genuinely
@@ -146,6 +162,26 @@ upstream, never worked around.
       scheduler HAL roots (spawn/yield/park/unpark + CAS from the
       FREESTANDING ledger) and for what spawn/channel mean without
       pthreads underneath.
+
+- [ ] **M9.5 — pixels and a pointer.** The Multiboot2 framebuffer tag
+      gets GRUB/VBE to hand over a linear framebuffer (works on the
+      BIOS/CSM path AND fixes the EFI-blindness case in one move — the
+      old "framebuffer console" item generalizes into this). Font blit +
+      fill/blit/line primitives exposed to EigenScript as freestanding
+      HAL roots (`ext_gfx`'s second backend). PS/2 mouse driver (IRQ12,
+      sibling of the keyboard driver — the T3200 touchpad is PS/2 aux).
+- [ ] **MD — the desktop.** The general-purpose capstone: EigenOS as a
+      personal computer in the full sense, and the niche answer to it —
+      **windows are observed bindings**. A window system written in
+      EigenScript over M9 tasks (window = task = `EigsState`) and M9.5
+      pixels: launcher, the REPL as a first-class window, the M8 vitals
+      monitor as the first widget. Every desktop ever built bolts on a
+      task manager afterward to ask "what is the machine doing?" — here
+      a hung app IS `diverging`, a settled one IS `converged`, for free.
+      Forcing yield: real-time input-event dispatch across EigsStates,
+      the gfx HAL under sustained load (Tidepool's frame-limiter lessons
+      apply), and whatever a window manager written in an observer
+      language turns out to need.
 
 ## Phase 4 — the durable, replayable machine
 
