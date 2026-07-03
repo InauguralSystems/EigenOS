@@ -27,6 +27,26 @@ Developed and tested under QEMU first.
 
 ## Status
 
+**Milestone-9.5 (done): pixels and a pointer.** The Multiboot2 header
+requests a 1024x768x32 linear framebuffer (optional — GRUB boots us
+either way); the console is now a cell **grid** (`src/vga.c`) rendered by
+whichever backend the boot produced: 0xB8000 VGA text, or font-blit onto
+the LFB (`src/fb.c`, 85x48 cells — the glyphs are EigenScript's own
+`font5x7` from `ext_gfx.c`, extracted at build time by `tools/mkfont.py`,
+so hosted windows and the bare-metal console draw identical text). All
+gfx drawing goes to a RAM shadow buffer; `gfx_present` copies to VRAM
+(VRAM is never read). EigenScript gets **ext_gfx's second backend**
+(`src/hal.c`): `gfx_open/clear/rect/line/point/circle/text/present/
+poll/ticks/delay` + `mouse_x/y/buttons`, with hosted-shaped event dicts —
+a Tidepool-style `ev.type`/`ev.key` event loop runs unchanged; `import
+draw` paints with the mouse at the bare-metal REPL. The pointer is a
+PS/2 mouse driver on IRQ12 (`src/mouse.c`, i8042 aux). Gates: on-boot
+self-test draws from script and reads the pixel back from VRAM (row 23);
+screendump-verified painting; `core2duo -m 3840 -smp 2` green; the USB
+dd-path green; **OVMF/EFI green — under EFI, GRUB hands a GOP
+framebuffer and the same console renders, closing the old EFI-blindness
+caveat**; `-vga none` degrades to the text console cleanly.
+
 **Milestone-N (done): the interactive REPL.** The machine boots into an
 EigenScript REPL — PS/2 keyboard in, VGA text console + serial out, one open
 runtime so state persists across lines, value echo, error reporting
@@ -106,6 +126,7 @@ make iso        # build a bootable ISO via GRUB
 make run        # boot the ISO in QEMU
 make serial     # boot headless, stream the COM1 kernel log to the terminal
 make dump       # boot headless, dump the VGA text screen out of the guest
+make shot       # boot headless, screendump the framebuffer -> build/screen.png
 ```
 
 Build needs `gcc` + `binutils`. Booting needs `qemu-system-x86`, and `make iso`
@@ -172,6 +193,10 @@ rejects ELF64, so GRUB does the loading.
   seam (EigenScript PR #363); the scheduler is EigenScript and a stalled
   task's `progress` reads `stable` — scheduling policy as an observer
   predicate.
+- [x] **M9.5** — pixels and a pointer: linear framebuffer + font-blit
+  console (text fallback intact, EFI blindness fixed), ext_gfx's second
+  backend for EigenScript, PS/2 mouse on IRQ12 — `import draw` paints
+  on bare metal (see Status).
 - [ ] **M10** — storage: tidelog-style crash-recoverable log as the
   filesystem, over an ATA driver
 - [ ] **M11** — the system journal: trace tape over machine state;

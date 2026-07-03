@@ -181,13 +181,32 @@ upstream, never worked around.
       16 MiB arena leak per step → OOM; fixed to identify by state (PR
       #363). core2duo/3840 gate green.
 
-- [ ] **M9.5 — pixels and a pointer.** The Multiboot2 framebuffer tag
-      gets GRUB/VBE to hand over a linear framebuffer (works on the
-      BIOS/CSM path AND fixes the EFI-blindness case in one move — the
-      old "framebuffer console" item generalizes into this). Font blit +
-      fill/blit/line primitives exposed to EigenScript as freestanding
-      HAL roots (`ext_gfx`'s second backend). PS/2 mouse driver (IRQ12,
-      sibling of the keyboard driver — the T3200 touchpad is PS/2 aux).
+- [x] **M9.5 — pixels and a pointer (DONE 2026-07-02).** The Multiboot2
+      header requests 1024x768x32 (optional flag); the console became a
+      cell GRID (vga.c) rendered by either backend — 0xB8000 text, or
+      font-blit onto the LFB (fb.c, the ext_gfx `font5x7` extracted at
+      build time by `tools/mkfont.py` — hosted windows and the metal
+      console draw the same glyphs, 85x48 cells). The LFB sits above
+      ramtop (outside the direct map), so early boot rows buffer in the
+      grid and repaint once `map_page` can reach it; a kmalloc'd shadow
+      buffer takes all gfx drawing and `gfx_present` copies to VRAM
+      (VRAM is never read — one self-test probe excepted). ext_gfx's
+      **second backend** in hal.c: gfx_open/close/clear/rect/line/
+      point/circle/text/present/poll/ticks/delay + mouse_x/y/buttons,
+      hosted-shaped event dicts (Tidepool's `ev.type`/`ev.key` loop
+      idiom runs as-is); gfx_open suspends the console (grid still
+      records), gfx_close/eval-error repaints it. PS/2 mouse on IRQ12
+      (i8042 aux, AUXB-checked routing in both IRQ handlers, 3-byte
+      packets). IRQ-path blitter is kernel-flags with rep-string asm —
+      `objdump` audit: zero xmm, zero mini-libc mem* calls. Gates:
+      boot self-test row 23 (script draws, kernel reads the pixel back
+      from VRAM); screendump proof of console + `import draw` mouse
+      painting + erase + console restore; core2duo/3840/smp2 green;
+      USB dd-path green; **OVMF/EFI green — GOP framebuffer at a
+      different address renders the same console, EFI-blindness fixed
+      as predicted**; `-vga none` falls back to the text console with
+      the gfx self-test a documented skip. Keydown-only key events and
+      no arrow keys yet (E0 scancodes) — MD's input-dispatch work.
 - [ ] **MD — the desktop.** The general-purpose capstone: EigenOS as a
       personal computer in the full sense, and the niche answer to it —
       **windows are observed bindings**. A window system written in

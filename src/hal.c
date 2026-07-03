@@ -20,6 +20,8 @@
 #include "keyboard.h"
 #include "stackguard.h"
 #include "vga.h"
+#include "fb.h"
+#include "mouse.h"
 #include "eigs_embed.h"        /* from EigenScript/src, via -I in the Makefile */
 
 /* Console fan-out: serial always (headless log); VGA once the REPL owns
@@ -278,6 +280,249 @@ static void register_tasks(void) {
     eigs_register_function("task_kill",  b_task_kill);
 }
 
+/* M9.5: pixels and a pointer — ext_gfx's second backend. The same
+ * builtin names Tidepool's loop calls hosted (gfx_open/clear/rect/line/
+ * point/circle/text/present/poll/ticks/delay), backed by the LFB shadow
+ * buffer (fb.c) instead of SDL2, and gfx_poll fed by the PS/2 drivers
+ * with hosted-shaped event dicts ({"type":"mousemove","x":..,"y":..},
+ * {"type":"keydown","key":"q"}, SDL button numbering 1/2/3).
+ *
+ * One display, no windows (until MD): gfx_open suspends the console —
+ * the grid still records, serial still logs — and gfx_close repaints
+ * it. Subset notes: window size/title are fixed by the boot mode (the
+ * [w,h,title] args are accepted, ignored); key events are keydown-only
+ * (the translated PS/2 ring has no releases); no wheel. */
+static double list_num(EigsValue *l, int i) {
+    EigsValue *v = eigs_value_list_get(l, i);
+    double d = (v && eigs_value_type(v) == EIGS_TYPE_NUM)
+                   ? eigs_value_as_num(v) : 0.0;
+    if (v) eigs_value_release(v);
+    return d;
+}
+
+static void list_str(EigsValue *l, int i, char *buf, int cap) {
+    buf[0] = 0;
+    EigsValue *v = eigs_value_list_get(l, i);
+    if (v && eigs_value_type(v) == EIGS_TYPE_STR) {
+        const char *s = eigs_value_as_string(v);
+        int k = 0;
+        for (; s && s[k] && k < cap - 1; k++) buf[k] = s[k];
+        buf[k] = 0;
+    }
+    if (v) eigs_value_release(v);
+}
+
+static int arg_list_min(EigsValue *a, int n) {
+    return a && eigs_value_type(a) == EIGS_TYPE_LIST &&
+           eigs_value_list_len(a) >= n;
+}
+
+static int g_gfx_open;
+
+static EigsValue *b_gfx_open(EigsValue *a) {
+    (void)a;                          /* [w,h,title] accepted; mode is fixed */
+    if (!fb_active()) return eigs_value_new_num(0);   /* hosted-parity fail */
+    vga_suspend(1);
+    fb_gfx_clear(0, 0, 0);
+    fb_present();
+    g_gfx_open = 1;
+    return eigs_value_new_num(1);
+}
+
+static EigsValue *b_gfx_close(EigsValue *a) {
+    (void)a;
+    g_gfx_open = 0;
+    vga_suspend(0);                   /* repaints the console grid */
+    return eigs_value_new_null();
+}
+
+static EigsValue *b_gfx_clear(EigsValue *a) {
+    int r = 0, g = 0, b = 0;
+    if (arg_list_min(a, 3)) {
+        r = (int)list_num(a, 0); g = (int)list_num(a, 1); b = (int)list_num(a, 2);
+    }
+    fb_gfx_clear(r, g, b);
+    return eigs_value_new_null();
+}
+
+static EigsValue *b_gfx_rect(EigsValue *a) {
+    if (!arg_list_min(a, 7)) return eigs_value_new_null();
+    int alpha = eigs_value_list_len(a) >= 8 ? (int)list_num(a, 7) : 255;
+    fb_gfx_fill((int)list_num(a, 0), (int)list_num(a, 1),
+                (int)list_num(a, 2), (int)list_num(a, 3),
+                (int)list_num(a, 4), (int)list_num(a, 5),
+                (int)list_num(a, 6), alpha);
+    return eigs_value_new_null();
+}
+
+static EigsValue *b_gfx_line(EigsValue *a) {
+    if (!arg_list_min(a, 7)) return eigs_value_new_null();
+    fb_gfx_line((int)list_num(a, 0), (int)list_num(a, 1),
+                (int)list_num(a, 2), (int)list_num(a, 3),
+                (int)list_num(a, 4), (int)list_num(a, 5),
+                (int)list_num(a, 6));
+    return eigs_value_new_null();
+}
+
+static EigsValue *b_gfx_point(EigsValue *a) {
+    if (!arg_list_min(a, 5)) return eigs_value_new_null();
+    fb_gfx_point((int)list_num(a, 0), (int)list_num(a, 1),
+                 (int)list_num(a, 2), (int)list_num(a, 3),
+                 (int)list_num(a, 4));
+    return eigs_value_new_null();
+}
+
+static EigsValue *b_gfx_circle(EigsValue *a) {
+    if (!arg_list_min(a, 6)) return eigs_value_new_null();
+    fb_gfx_circle((int)list_num(a, 0), (int)list_num(a, 1),
+                  (int)list_num(a, 2), (int)list_num(a, 3),
+                  (int)list_num(a, 4), (int)list_num(a, 5));
+    return eigs_value_new_null();
+}
+
+static EigsValue *b_gfx_text(EigsValue *a) {
+    if (!arg_list_min(a, 6)) return eigs_value_new_null();
+    char text[256];
+    list_str(a, 2, text, sizeof text);
+    int scale = eigs_value_list_len(a) >= 7 ? (int)list_num(a, 6) : 1;
+    fb_gfx_text((int)list_num(a, 0), (int)list_num(a, 1), text,
+                (int)list_num(a, 3), (int)list_num(a, 4),
+                (int)list_num(a, 5), scale);
+    return eigs_value_new_null();
+}
+
+static EigsValue *b_gfx_present(EigsValue *a) {
+    (void)a;
+    fb_present();
+    return eigs_value_new_null();
+}
+
+static EigsValue *b_gfx_ticks(EigsValue *a) {
+    (void)a;
+    uint32_t hz = timer_hz(); if (!hz) hz = 100;
+    return eigs_value_new_num((double)(timer_ticks() * 1000ULL / hz));
+}
+
+static EigsValue *b_gfx_delay(EigsValue *a) {
+    if (a && eigs_value_type(a) == EIGS_TYPE_NUM)
+        usleep((unsigned)(eigs_value_as_num(a) * 1000.0));
+    return eigs_value_new_null();
+}
+
+static EigsValue *b_gfx_title(EigsValue *a) {
+    (void)a;                                     /* no window to retitle */
+    return eigs_value_new_null();
+}
+
+/* Event pump: PS/2 packets become SDL-shaped events. A packet can move
+ * AND flip buttons, so one packet may fan out to several events — a
+ * small queue decouples them for one-at-a-time gfx_poll. */
+#define GEVQ 32
+static struct { uint8_t type; int x, y, btn; } g_evq[GEVQ];
+static unsigned g_evh, g_evt;
+static int g_btn_prev;
+enum { GE_MOVE = 1, GE_DOWN, GE_UP };
+
+static void ev_push(int type, int x, int y, int btn) {
+    unsigned next = (g_evh + 1) % GEVQ;
+    if (next == g_evt) return;
+    g_evq[g_evh].type = (uint8_t)type;
+    g_evq[g_evh].x = x; g_evq[g_evh].y = y; g_evq[g_evh].btn = btn;
+    g_evh = next;
+}
+
+static const int sdl_btn[3] = { 1, 3, 2 };       /* PS/2 L,R,M -> SDL 1,3,2 */
+
+static void pump_mouse(void) {
+    int x, y, btn, moved;
+    while (((g_evh + 4) % GEVQ) != g_evt &&      /* room for a full fan-out */
+           mouse_next_packet(&x, &y, &btn, &moved)) {
+        if (moved) ev_push(GE_MOVE, x, y, 0);
+        int changed = btn ^ g_btn_prev;
+        for (int bit = 0; bit < 3; bit++)
+            if (changed & (1 << bit))
+                ev_push((btn & (1 << bit)) ? GE_DOWN : GE_UP, x, y, sdl_btn[bit]);
+        g_btn_prev = btn;
+    }
+}
+
+static void dset_num(EigsValue *d, const char *k, double n) {
+    EigsValue *v = eigs_value_new_num(n);
+    eigs_value_dict_set(d, k, v);
+    eigs_value_release(v);
+}
+static void dset_str(EigsValue *d, const char *k, const char *s) {
+    EigsValue *v = eigs_value_new_string(s);
+    eigs_value_dict_set(d, k, v);
+    eigs_value_release(v);
+}
+
+static const char *key_name(int c, char *one) {
+    switch (c) {
+    case '\n': return "return";
+    case 27:   return "escape";
+    case ' ':  return "space";
+    case '\b': return "backspace";
+    case '\t': return "tab";
+    default:   one[0] = (char)c; one[1] = 0; return one;
+    }
+}
+
+static EigsValue *b_gfx_poll(EigsValue *a) {
+    (void)a;
+    if (!g_gfx_open) return eigs_value_new_null();
+    pump_mouse();
+    if (g_evt != g_evh) {
+        int type = g_evq[g_evt].type, x = g_evq[g_evt].x,
+            y = g_evq[g_evt].y, btn = g_evq[g_evt].btn;
+        g_evt = (g_evt + 1) % GEVQ;
+        EigsValue *d = eigs_value_new_dict(4);
+        if (type == GE_MOVE) {
+            dset_str(d, "type", "mousemove");
+        } else {
+            dset_str(d, "type", type == GE_DOWN ? "mousedown" : "mouseup");
+            dset_num(d, "button", (double)btn);
+        }
+        dset_num(d, "x", (double)x);
+        dset_num(d, "y", (double)y);
+        return d;
+    }
+    int c = kbd_getchar();
+    if (c >= 0) {
+        char one[2];
+        EigsValue *d = eigs_value_new_dict(2);
+        dset_str(d, "type", "keydown");
+        dset_str(d, "key", key_name(c, one));
+        return d;
+    }
+    return eigs_value_new_null();
+}
+
+static EigsValue *b_mouse_x(EigsValue *a)  { (void)a; return eigs_value_new_num((double)mouse_x()); }
+static EigsValue *b_mouse_y(EigsValue *a)  { (void)a; return eigs_value_new_num((double)mouse_y()); }
+static EigsValue *b_mouse_btn(EigsValue *a){ (void)a; return eigs_value_new_num((double)mouse_buttons()); }
+
+static void register_gfx(void) {
+    eigs_register_function("gfx_open",    b_gfx_open);
+    eigs_register_function("gfx_close",   b_gfx_close);
+    eigs_register_function("gfx_clear",   b_gfx_clear);
+    eigs_register_function("gfx_rect",    b_gfx_rect);
+    eigs_register_function("gfx_line",    b_gfx_line);
+    eigs_register_function("gfx_point",   b_gfx_point);
+    eigs_register_function("gfx_circle",  b_gfx_circle);
+    eigs_register_function("gfx_text",    b_gfx_text);
+    eigs_register_function("gfx_present", b_gfx_present);
+    eigs_register_function("gfx_poll",    b_gfx_poll);
+    eigs_register_function("gfx_ticks",   b_gfx_ticks);
+    eigs_register_function("gfx_delay",   b_gfx_delay);
+    eigs_register_function("gfx_title",   b_gfx_title);
+    /* the pointer as a vital: sample mouse_x into a binding and the
+     * observer reads the pointer's trajectory, same as heap_pressure */
+    eigs_register_function("mouse_x",       b_mouse_x);
+    eigs_register_function("mouse_y",       b_mouse_y);
+    eigs_register_function("mouse_buttons", b_mouse_btn);
+}
+
 /* M7.5: the ROM bundle. build/bundle.c (generated by tools/mkbundle.py)
  * bakes the EigenScript stdlib + demos/ into the image; this provider
  * serves them through the runtime's source seam so `import` works with
@@ -303,6 +548,8 @@ int eigs_run_demo(void) {
     g_primary = st;
     register_tasks();
     serial_write("[m9] task builtins registered (spawn/step/read/alive/kill)\n");
+    register_gfx();
+    serial_write("[m9.5] gfx builtins registered (fb shadow + PS/2 pointer)\n");
 
     EigsValue *v = eigs_eval_string("6 * 7");
     if (!v || eigs_value_type(v) != EIGS_TYPE_NUM) {
@@ -430,6 +677,44 @@ int eigs_run_demo(void) {
                task_ok ? 0x0A : 0x4F);
     if (!task_ok) return 0;
 
+    /* M9.5: pixels + pointer — the script draws through the second
+     * backend, the kernel reads one pixel back from VRAM (the only
+     * VRAM read anywhere: a self-test probe). On a text-console boot
+     * (VBE declined) this is a documented skip, not a failure. */
+    if (fb_active()) {
+        EigsValue *v8 = eigs_eval_string(
+            "g is gfx_open of [1024, 768, \"selftest\"]\n"
+            "gfx_clear of [0, 0, 0]\n"
+            "gfx_rect of [10, 10, 50, 50, 255, 64, 32]\n"
+            "gfx_circle of [200, 40, 20, 32, 200, 64]\n"
+            "gfx_line of [10, 100, 300, 100, 64, 64, 255]\n"
+            "gfx_text of [10, 120, \"gfx on bare metal\", 220, 220, 220, 2]\n"
+            "gfx_present of null\n"
+            "g");
+        int gfx_ok = v8 && eigs_value_type(v8) == EIGS_TYPE_NUM &&
+                     (int)eigs_value_as_num(v8) == 1;
+        if (v8) eigs_value_release(v8);
+        if (eigs_has_error()) { gfx_ok = 0; eigs_clear_error(); }
+        if (gfx_ok && fb_vram_pixel(20, 20) != fb_pack(255, 64, 32)) {
+            serial_write("[m9.5] VRAM readback mismatch at (20,20)\n");
+            gfx_ok = 0;
+        }
+        EigsValue *vc = eigs_eval_string("gfx_close of null");
+        if (vc) eigs_value_release(vc);
+        int ptr_ok = mouse_present();
+        serial_write(gfx_ok ? "[m9.5] gfx rect/circle/line/text -> VRAM readback OK"
+                            : "[m9.5] gfx self-test FAILED");
+        serial_write(ptr_ok ? " (+ pointer)\n" : " (no pointer)\n");
+        vga_put_at(23, 0, gfx_ok ? (ptr_ok ? "M9.5: gfx on framebuffer + mouse OK"
+                                           : "M9.5: gfx on framebuffer OK (no mouse)")
+                                 : "M9.5: gfx self-test FAILED",
+                   gfx_ok ? 0x0A : 0x4F);
+        if (!gfx_ok) return 0;
+    } else {
+        serial_write("[m9.5] gfx self-test skipped (VGA text console)\n");
+        vga_put_at(23, 0, "M9.5: gfx skipped (text console)", 0x08);
+    }
+
     if (!stack_canary_ok()) {
         serial_write("[mn] PANIC: boot-stack canary trampled during demo\n");
         vga_put_at(19, 0, "MN: STACK CANARY TRAMPLED", 0x4F);
@@ -475,6 +760,15 @@ static void repl_show_value(EigsValue *v) {
  * layout-dependent fault. */
 static void repl_eval(const char *src) {
     EigsValue *v = eigs_eval_string(src);
+    /* If the eval died with gfx holding the screen, take it back — an
+     * error message must never render invisibly (the T3200 has no
+     * serial to read it from). A CLEAN eval leaves gfx open on
+     * purpose: hosted windows persist across lines; gfx_close of null
+     * is the way back to the console. */
+    if (eigs_has_error() && vga_suspended()) {
+        g_gfx_open = 0;
+        vga_suspend(0);
+    }
     if (eigs_has_error()) {
         con_write("error: ");
         con_write(eigs_last_error_message());
@@ -547,6 +841,8 @@ void eigs_repl(void) {
             len = 0;
         } else if (c == '\b') {
             if (len > 0) { len--; con_write("\b \b"); }
+        } else if (c < 32 && c != '\t') {
+            /* ESC etc. — gfx_poll's business, not line input */
         } else if (len < (int)sizeof(line) - 1) {
             line[len++] = (char)c;
             con_putc((char)c);                    /* echo */

@@ -1,0 +1,54 @@
+# draw.eigs — M9.5 demo: the pointer paints on the framebuffer.
+# At the EigenOS REPL:  import draw
+# Drag with the left button to paint, right button erases (background-
+# color strokes), q or escape returns to the console.
+# Same builtin surface as hosted ext_gfx (SDL2): gfx_open/clear/circle/
+# text/present/poll/delay/close, dict events, SDL button numbering.
+
+opened is gfx_open of [1024, 768, "EigenOS draw"]
+if opened == 0:
+    print of "draw: no framebuffer (text console boot) - nothing to paint on"
+if opened == 1:
+    gfx_clear of [12, 12, 28]
+    gfx_text of [12, 12, "EigenOS draw -- drag to paint, right button erases, q quits", 200, 220, 255, 2]
+    gfx_present of null
+
+    running is 1
+    held is 0
+    brush is 0
+    strokes is 0
+    loop while running == 1:
+        dirty is 0
+        ev is gfx_poll of null
+        loop while ev != null:
+            match ev.type:
+                case "keydown":
+                    if ev.key == "q":
+                        running is 0
+                    if ev.key == "escape":
+                        running is 0
+                case "mousedown":
+                    held is 1
+                    brush is ev.button
+                    if brush == 1:
+                        gfx_circle of [ev.x, ev.y, 6, 255, 180, 60]
+                    if brush == 3:
+                        gfx_circle of [ev.x, ev.y, 14, 12, 12, 28]
+                    dirty is 1
+                    strokes is strokes + 1
+                case "mouseup":
+                    held is 0
+                case "mousemove":
+                    if held == 1:
+                        if brush == 1:
+                            gfx_circle of [ev.x, ev.y, 6, 255, 180, 60]
+                        if brush == 3:
+                            gfx_circle of [ev.x, ev.y, 14, 12, 12, 28]
+                        dirty is 1
+                        strokes is strokes + 1
+            ev is gfx_poll of null
+        if dirty == 1:
+            gfx_present of null
+        gfx_delay of 10
+    gfx_close of null
+    print of ("draw: " + (str of strokes) + " paint strokes")

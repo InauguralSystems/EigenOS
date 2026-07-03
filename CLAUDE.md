@@ -23,6 +23,8 @@ make verify     # grub-file Multiboot2 check
 make iso        # BIOS-only bootable ISO (isohybrid — dd-able to USB)
 make serial     # boot headless in QEMU, stream COM1 to the terminal
 make dump       # boot headless, read the VGA text screen via monitor xp
+                # (text-fallback boots only — fb boots need `make shot`)
+make shot       # boot headless, screendump the framebuffer -> build/screen.png
 make usb USB=/dev/sdX   # write the ISO to a stick (guarded; overwrites!)
 ```
 
@@ -90,9 +92,13 @@ cd EigenOS && make && make verify
 this machine already boots BIOS/CSM natively.** Build the stick
 (`make usb USB=/dev/sdX` — on THIS machine only use a removable stick,
 never the internal disk), **F10** at power-on for the boot menu (Setup
-is **F2**), pick the USB → BIOS GRUB → real VGA text mode → self-test
-verdicts on screen → the REPL. This is the path where everything works
-as already designed.
+is **F2**), pick the USB → BIOS GRUB → self-test verdicts on screen →
+the REPL. Since M9.5 the normal on-screen mode is the **1024x768
+font-blit framebuffer console** (GRUB/VBE honors the kernel's MB2
+request; GM45 VBE should oblige); if VBE declines the mode, the kernel
+falls back to real VGA text on its own — SAME board, same verdicts,
+either way. `import draw` at the REPL is the pointer proof (the
+touchpad is PS/2 aux → IRQ12).
 
 **2. The GRUB menuentry (dual-boot, no media) — the everyday path once
 the stick has proven the kernel on this hardware.** Since the machine

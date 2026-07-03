@@ -38,7 +38,7 @@ EIGS_OBJS := $(addprefix build/eigs_,$(addsuffix .o,$(EIGS_SRCS))) \
 OBJS   := build/boot.o build/kernel.o build/pmm.o build/serial.o \
           build/idt.o build/isr.o build/paging.o build/pic.o \
           build/timer.o build/keyboard.o build/kheap.o build/vga.o \
-          build/crashlog.o build/bundle.o
+          build/fb.o build/mouse.o build/crashlog.o build/bundle.o
 
 # The ROM bundle (M7.5): the EigenScript stdlib + demos/ baked into the
 # image, served via the eigs_set_source_provider seam — `import` on bare
@@ -55,7 +55,7 @@ build:
 build/boot.o: src/boot.S | build
 	$(CC) -m64 -c $< -o $@
 
-build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h src/paging.h src/pic.h src/timer.h src/keyboard.h src/kheap.h src/stackguard.h src/crashlog.h | build
+build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h src/paging.h src/pic.h src/timer.h src/keyboard.h src/kheap.h src/stackguard.h src/crashlog.h src/vga.h src/fb.h src/mouse.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/pmm.o: src/pmm.c src/pmm.h src/multiboot2.h src/crashlog.h | build
@@ -64,7 +64,7 @@ build/pmm.o: src/pmm.c src/pmm.h src/multiboot2.h src/crashlog.h | build
 build/serial.o: src/serial.c src/serial.h src/io.h src/crashlog.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
-build/idt.o: src/idt.c src/idt.h src/serial.h src/pic.h src/timer.h src/keyboard.h src/vga.h | build
+build/idt.o: src/idt.c src/idt.h src/serial.h src/pic.h src/timer.h src/keyboard.h src/mouse.h src/vga.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/isr.o: src/isr.S | build
@@ -79,13 +79,26 @@ build/pic.o: src/pic.c src/pic.h src/io.h | build
 build/timer.o: src/timer.c src/timer.h src/io.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
-build/keyboard.o: src/keyboard.c src/keyboard.h src/io.h | build
+build/keyboard.o: src/keyboard.c src/keyboard.h src/mouse.h src/io.h | build
 	$(CC) $(CFLAGS) $< -o $@
+
+build/mouse.o: src/mouse.c src/mouse.h src/io.h | build
+	$(CC) $(CFLAGS) $< -o $@
+
+# The fb console's font is EigenScript's own gfx_text font, extracted
+# from ext_gfx.c at build time (single source of truth, like the ROM
+# bundle) — hosted windows and the bare-metal console draw the same
+# glyphs.
+build/font5x7.h: tools/mkfont.py $(EIGS)/src/ext_gfx.c | build
+	python3 tools/mkfont.py $(EIGS)/src/ext_gfx.c $@
+
+build/fb.o: src/fb.c src/fb.h src/paging.h src/kheap.h build/font5x7.h | build
+	$(CC) $(CFLAGS) -Ibuild $< -o $@
 
 build/kheap.o: src/kheap.c src/kheap.h src/pmm.h src/paging.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
-build/vga.o: src/vga.c src/vga.h | build
+build/vga.o: src/vga.c src/vga.h src/fb.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/crashlog.o: src/crashlog.c src/crashlog.h | build
@@ -106,7 +119,7 @@ build/eigsfs_%.o: $(EIGS)/src/freestanding/%.c | build
 
 # The HAL glue: runtime cflags (SSE) so variadic FP + the double return
 # from eigs_value_as_num are handled; -Isrc for the kernel headers.
-build/hal.o: src/hal.c src/kheap.h src/serial.h src/timer.h src/keyboard.h src/vga.h src/stackguard.h | build
+build/hal.o: src/hal.c src/kheap.h src/serial.h src/timer.h src/keyboard.h src/vga.h src/fb.h src/mouse.h src/stackguard.h | build
 	$(CC) $(RT_CFLAGS) -Isrc $< -o $@
 
 $(KERNEL): $(OBJS) $(EIGS_OBJS) linker.ld
@@ -156,7 +169,15 @@ dump: $(ISO)
 	{ sleep 6; echo "xp /960bx 0xb8000"; sleep 1; echo quit; } | \
 		$(QEMU) $(QFLAGS) -cdrom $(ISO) -display none -monitor stdio | grep -a ': 0x'
 
+# Boot headless, screendump the framebuffer once the self-tests are up,
+# convert to PNG (the M9.5 visual gate — what the T3200 panel will show).
+shot: $(ISO)
+	{ sleep 12; echo "screendump build/screen.ppm"; sleep 1; echo quit; } | \
+		$(QEMU) $(QFLAGS) -cdrom $(ISO) -display none -monitor stdio >/dev/null
+	python3 -c "from PIL import Image; Image.open('build/screen.ppm').save('build/screen.png')"
+	@echo "wrote build/screen.png"
+
 clean:
 	rm -rf build
 
-.PHONY: all verify iso run run-headless serial dump clean
+.PHONY: all verify iso run run-headless serial dump shot clean

@@ -4,6 +4,7 @@
 #include "pic.h"
 #include "timer.h"
 #include "keyboard.h"
+#include "mouse.h"
 #include "vga.h"
 
 struct idt_entry {
@@ -63,8 +64,9 @@ void isr_dispatch(interrupt_frame *f) {
      * re-enabled by iretq restoring RFLAGS. */
     if (f->vector >= 32 && f->vector <= 47) {
         int irq = (int)(f->vector - 32);
-        if (irq == 0)      timer_irq();
-        else if (irq == 1) kbd_irq();
+        if (irq == 0)       timer_irq();
+        else if (irq == 1)  kbd_irq();
+        else if (irq == 12) mouse_irq();
         pic_eoi(irq);
         return;
     }
@@ -97,7 +99,7 @@ void isr_dispatch(interrupt_frame *f) {
     serial_write("\n");
     /* Also render to VGA (the T3200 has no serial) + 2 panic beeps (works
      * even with the screen dead). The full frame is in the RAM crash log. */
-    vga_put_at(24, 0, "FATAL CPU EXCEPTION - see crash log (2 beeps)", 0x4F);
+    vga_put_at(vga_rows() - 1, 0, "FATAL CPU EXCEPTION - see crash log (2 beeps)", 0x4F);
     speaker_beeps(2);
     for (;;) __asm__ volatile ("cli; hlt");
 }

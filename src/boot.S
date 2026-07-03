@@ -20,6 +20,13 @@ mb2_start:
     .long MB2_ARCH
     .long mb2_end - mb2_start
     .long -(MB2_MAGIC + MB2_ARCH + (mb2_end - mb2_start))
+    .align 8                                 # framebuffer request (M9.5):
+    .word 5                                  #   type=5 (framebuffer)
+    .word 1                                  #   flags=1 (OPTIONAL: still boot
+    .long 20                                 #   if VBE can't oblige — the
+    .long 1024                               #   kernel then falls back to the
+    .long 768                                #   0xB8000 text console)
+    .long 32                                 #   preferred 1024x768x32
     .align 8                                 # end tag: type=0, flags=0, size=8
     .word 0
     .word 0

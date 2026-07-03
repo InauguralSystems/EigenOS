@@ -17,47 +17,64 @@
 #include "kheap.h"
 #include "stackguard.h"
 #include "crashlog.h"
+#include "vga.h"
+#include "fb.h"
+#include "mouse.h"
 
 extern int  eigs_run_demo(void);  /* src/hal.c — drives the runtime (SSE side) */
 extern void eigs_repl(void);      /* src/hal.c — interactive REPL, never returns */
 
-#define VGA       ((volatile uint16_t *)0xB8000)
-#define VGA_COLS  80
-#define VGA_ROWS  25
-
-/* attr<<8 | char : light-grey-on-black (0x07), white-on-black (0x0F) */
-static inline uint16_t cell(char c, uint8_t attr) {
-    return (uint16_t)c | ((uint16_t)attr << 8);
-}
-
+/* Boot-board helpers over the grid console (vga.c). Since M9.5 the grid
+ * is the source of truth: in framebuffer mode these rows buffer until
+ * the LFB is mapped, then repaint as font-blit cells — same board, both
+ * backends. */
 static void clear(uint8_t attr) {
-    for (int i = 0; i < VGA_COLS * VGA_ROWS; i++)
-        VGA[i] = cell(' ', attr);
+    (void)attr;
+    vga_clear();
 }
 
 static void put_at(int row, int col, const char *s, uint8_t attr) {
-    int i = row * VGA_COLS + col;
-    for (; *s; s++, i++)
-        VGA[i] = cell(*s, attr);
+    vga_put_at(row, col, s, attr);
 }
 
 static void put_hex32(int row, int col, uint32_t v, uint8_t attr) {
     static const char digits[] = "0123456789abcdef";
-    int i = row * VGA_COLS + col;
-    for (int shift = 28; shift >= 0; shift -= 4, i++)
-        VGA[i] = cell(digits[(v >> shift) & 0xF], attr);
+    char buf[9];
+    for (int i = 0; i < 8; i++) buf[i] = digits[(v >> (28 - 4 * i)) & 0xF];
+    buf[8] = 0;
+    vga_put_at(row, col, buf, attr);
 }
 
 /* Decimal u64; returns the column just past the last digit. */
 static int put_dec(int row, int col, uint64_t v, uint8_t attr) {
-    char tmp[21];
+    char tmp[21], buf[21];
     int n = 0;
     if (v == 0) tmp[n++] = '0';
     while (v) { tmp[n++] = (char)('0' + v % 10); v /= 10; }
-    int i = row * VGA_COLS + col;
-    for (int k = n - 1; k >= 0; k--, i++)
-        VGA[i] = cell(tmp[k], attr);
+    for (int k = 0; k < n; k++) buf[k] = tmp[n - 1 - k];
+    buf[n] = 0;
+    vga_put_at(row, col, buf, attr);
     return col + n;
+}
+
+/* M9.5: find the Multiboot2 framebuffer answer (tag 8). GRUB honors the
+ * header's 1024x768x32 request when VBE can; fb_type RGB hands over a
+ * linear framebuffer, EGA text means the 0xB8000 console stands. */
+static void fb_parse(uint32_t mb2_info) {
+    const uint8_t *p = (const uint8_t *)(uintptr_t)mb2_info;
+    uint32_t total = ((const mb2_info_header *)p)->total_size;
+    uint32_t off = 8;
+    while (off + 8 <= total) {
+        const mb2_tag *t = (const mb2_tag *)(p + off);
+        if (t->type == MB2_TAG_END) break;
+        if (t->type == MB2_TAG_FRAMEBUFFER) {
+            const mb2_tag_framebuffer *f = (const mb2_tag_framebuffer *)t;
+            if (f->fb_type == MB2_FB_TYPE_RGB)
+                fb_set_info(f->addr, f->pitch, f->width, f->height, f->bpp,
+                            f->r_pos, f->g_pos, f->b_pos);
+        }
+        off += (t->size + 7) & ~7u;
+    }
 }
 
 /* Allocate, pattern-fill, verify, free, re-allocate — and require the
@@ -181,6 +198,13 @@ void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
         for (int i = 0; i < STACK_CANARY_QWORDS; i++)
             ((volatile uint64_t *)stack_bottom)[i] = STACK_CANARY;
     }
+    /* M9.5: learn the display mode BEFORE the first console write — in
+     * framebuffer mode there is no VGA text memory; the board buffers
+     * in the grid until the LFB is mapped (after paging + kheap). */
+    if (mb2_magic == MB2_BOOT_MAGIC) {
+        fb_parse(mb2_info);
+        if (fb_present_mode()) vga_fb_pending();
+    }
     clear(0x07);
     put_at(0, 0, "EigenOS", 0x0F);
     put_at(0, 8, "// bare metal, x86-64 long mode", 0x07);
@@ -280,14 +304,45 @@ void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
         serial_write("[m5] kheap self-test: FAILED\n");
     }
 
-    /* --- M4: hardware interrupts (PIC + PIT timer + PS/2 keyboard) --- */
-    pic_init((1u << 0) | (1u << 1));              /* remap; unmask IRQ0+IRQ1 */
-    timer_init(100);
+    /* --- M9.5: pixels — map the LFB; the console becomes font-blit --- */
+    if (fb_present_mode()) {
+        if (vga_fb_activate() == 0) {
+            serial_write("[m9.5] framebuffer ");
+            serial_write_dec(fb_width());
+            serial_write("x");
+            serial_write_dec(fb_height());
+            serial_write("x");
+            serial_write_dec(fb_bpp());
+            serial_write(" @ 0x");
+            serial_write_hex64(fb_phys());
+            serial_write(", console ");
+            serial_write_dec((uint64_t)vga_cols());
+            serial_write("x");
+            serial_write_dec((uint64_t)vga_rows());
+            serial_write(" (font blit) OK\n");
+        } else {
+            serial_write("[m9.5] framebuffer activation FAILED -> VGA text fallback\n");
+        }
+    } else {
+        serial_write("[m9.5] no RGB framebuffer from GRUB (VGA text console)\n");
+    }
+
+    /* --- M4: hardware interrupts (PIC + PIT + PS/2 keyboard/mouse) ---
+     * Mouse init talks to the 8042 data port, so it runs BEFORE IRQ12
+     * is unmasked (its ACK bytes must not race the handler). */
     keyboard_init();
+    int mouse_ok = mouse_init();
+    mouse_set_bounds(fb_active() ? (int)fb_width() : 640,
+                     fb_active() ? (int)fb_height() : 400);
+    pic_init((1u << 0) | (1u << 1) |              /* PIT + keyboard */
+             (1u << 2) | (1u << 12));             /* cascade + mouse (M9.5) */
+    timer_init(100);
     __asm__ volatile ("sti");
     serial_write("[m4] PIC remapped 32-47, PIT ");
     serial_write_dec(timer_hz());
     serial_write(" Hz, keyboard armed, interrupts ON\n");
+    serial_write(mouse_ok ? "[m9.5] PS/2 mouse: aux enabled, streaming ACKed OK\n"
+                          : "[m9.5] PS/2 mouse: not detected (no pointer)\n");
 
     /* Timer self-test: with IRQs live, ticks must advance on their own.
      * Bounded busy-wait so a dead timer FAILS rather than hangs. */
