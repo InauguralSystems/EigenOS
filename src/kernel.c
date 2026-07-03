@@ -341,8 +341,10 @@ void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
     serial_write("[m4] PIC remapped 32-47, PIT ");
     serial_write_dec(timer_hz());
     serial_write(" Hz, keyboard armed, interrupts ON\n");
-    serial_write(mouse_ok ? "[m9.5] PS/2 mouse: aux enabled, streaming ACKed OK\n"
-                          : "[m9.5] PS/2 mouse: not detected (no pointer)\n");
+    serial_write(!mouse_ok ? "[m9.5] PS/2 mouse: not detected (no pointer)\n"
+                 : mouse_has_wheel()
+                     ? "[m9.5] PS/2 mouse: aux streaming ACKed OK (IntelliMouse wheel)\n"
+                     : "[m9.5] PS/2 mouse: aux streaming ACKed OK (no wheel)\n");
 
     /* Timer self-test: with IRQs live, ticks must advance on their own.
      * Bounded busy-wait so a dead timer FAILS rather than hangs. */

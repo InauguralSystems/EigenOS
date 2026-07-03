@@ -196,7 +196,10 @@ rejects ELF64, so GRUB does the loading.
 - [x] **M9.5** — pixels and a pointer: linear framebuffer + font-blit
   console (text fallback intact, EFI blindness fixed), ext_gfx's second
   backend for EigenScript, PS/2 mouse on IRQ12 — `import draw` paints
-  on bare metal (see Status).
+  on bare metal (see Status). Plus MD's input-dispatch groundwork:
+  E0 keys (arrows/home/end/delete), keyup events + modifiers, the
+  IntelliMouse wheel, and REPL line editing with a visible cursor and
+  up/down history.
 - [ ] **M10** — storage: tidelog-style crash-recoverable log as the
   filesystem, over an ATA driver
 - [ ] **M11** — the system journal: trace tape over machine state;

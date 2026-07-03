@@ -11,6 +11,7 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>            /* declarations; the link resolves to mini_libc */
 #include <time.h>
 #include <pthread.h>
 
@@ -323,6 +324,7 @@ static EigsValue *b_gfx_open(EigsValue *a) {
     (void)a;                          /* [w,h,title] accepted; mode is fixed */
     if (!fb_active()) return eigs_value_new_num(0);   /* hosted-parity fail */
     vga_suspend(1);
+    kbd_gfx_mode(1);                  /* keys become events, not REPL chars */
     fb_gfx_clear(0, 0, 0);
     fb_present();
     g_gfx_open = 1;
@@ -332,6 +334,7 @@ static EigsValue *b_gfx_open(EigsValue *a) {
 static EigsValue *b_gfx_close(EigsValue *a) {
     (void)a;
     g_gfx_open = 0;
+    kbd_gfx_mode(0);
     vga_suspend(0);                   /* repaints the console grid */
     return eigs_value_new_null();
 }
@@ -415,13 +418,13 @@ static EigsValue *b_gfx_title(EigsValue *a) {
 }
 
 /* Event pump: PS/2 packets become SDL-shaped events. A packet can move
- * AND flip buttons, so one packet may fan out to several events — a
- * small queue decouples them for one-at-a-time gfx_poll. */
+ * AND flip buttons AND scroll, so one packet may fan out to several
+ * events — a small queue decouples them for one-at-a-time gfx_poll. */
 #define GEVQ 32
 static struct { uint8_t type; int x, y, btn; } g_evq[GEVQ];
 static unsigned g_evh, g_evt;
 static int g_btn_prev;
-enum { GE_MOVE = 1, GE_DOWN, GE_UP };
+enum { GE_MOVE = 1, GE_DOWN, GE_UP, GE_WHEEL };
 
 static void ev_push(int type, int x, int y, int btn) {
     unsigned next = (g_evh + 1) % GEVQ;
@@ -434,10 +437,15 @@ static void ev_push(int type, int x, int y, int btn) {
 static const int sdl_btn[3] = { 1, 3, 2 };       /* PS/2 L,R,M -> SDL 1,3,2 */
 
 static void pump_mouse(void) {
-    int x, y, btn, moved;
-    while (((g_evh + 4) % GEVQ) != g_evt &&      /* room for a full fan-out */
-           mouse_next_packet(&x, &y, &btn, &moved)) {
+    int x, y, btn, moved, wz;
+    while (((g_evh + 5) % GEVQ) != g_evt &&      /* room for a full fan-out */
+           mouse_next_packet(&x, &y, &btn, &moved, &wz)) {
         if (moved) ev_push(GE_MOVE, x, y, 0);
+        if (wz)                                  /* PS/2 z+ = toward the user
+                                                    = scroll down; SDL y+ =
+                                                    scroll up (Linux psmouse
+                                                    negates the same way) */
+            ev_push(GE_WHEEL, 0, -wz, 0);
         int changed = btn ^ g_btn_prev;
         for (int bit = 0; bit < 3; bit++)
             if (changed & (1 << bit))
@@ -459,11 +467,20 @@ static void dset_str(EigsValue *d, const char *k, const char *s) {
 
 static const char *key_name(int c, char *one) {
     switch (c) {
-    case '\n': return "return";
-    case 27:   return "escape";
-    case ' ':  return "space";
-    case '\b': return "backspace";
-    case '\t': return "tab";
+    case '\n':       return "return";
+    case 27:         return "escape";
+    case ' ':        return "space";
+    case '\b':       return "backspace";
+    case '\t':       return "tab";
+    case KEY_UP:     return "up";
+    case KEY_DOWN:   return "down";
+    case KEY_LEFT:   return "left";
+    case KEY_RIGHT:  return "right";
+    case KEY_HOME:   return "home";
+    case KEY_END:    return "end";
+    case KEY_DELETE: return "delete";
+    case KEY_PGUP:   return "pageup";
+    case KEY_PGDN:   return "pagedown";
     default:   one[0] = (char)c; one[1] = 0; return one;
     }
 }
@@ -477,22 +494,35 @@ static EigsValue *b_gfx_poll(EigsValue *a) {
             y = g_evq[g_evt].y, btn = g_evq[g_evt].btn;
         g_evt = (g_evt + 1) % GEVQ;
         EigsValue *d = eigs_value_new_dict(4);
-        if (type == GE_MOVE) {
+        switch (type) {
+        case GE_MOVE:
             dset_str(d, "type", "mousemove");
-        } else {
+            dset_num(d, "x", (double)x);
+            dset_num(d, "y", (double)y);
+            break;
+        case GE_WHEEL:                    /* hosted shape: x/y = scroll amounts */
+            dset_str(d, "type", "wheel");
+            dset_num(d, "x", (double)x);
+            dset_num(d, "y", (double)y);
+            break;
+        default:
             dset_str(d, "type", type == GE_DOWN ? "mousedown" : "mouseup");
             dset_num(d, "button", (double)btn);
+            dset_num(d, "x", (double)x);
+            dset_num(d, "y", (double)y);
+            break;
         }
-        dset_num(d, "x", (double)x);
-        dset_num(d, "y", (double)y);
         return d;
     }
-    int c = kbd_getchar();
-    if (c >= 0) {
+    int code, down, mods;
+    if (kbd_next_event(&code, &down, &mods)) {
         char one[2];
-        EigsValue *d = eigs_value_new_dict(2);
-        dset_str(d, "type", "keydown");
-        dset_str(d, "key", key_name(c, one));
+        EigsValue *d = eigs_value_new_dict(4);
+        dset_str(d, "type", down ? "keydown" : "keyup");
+        dset_str(d, "key", key_name(code, one));
+        dset_num(d, "shift", (mods & KMOD_SHIFT) ? 1 : 0);
+        dset_num(d, "ctrl",  (mods & KMOD_CTRL)  ? 1 : 0);
+        dset_num(d, "alt",   (mods & KMOD_ALT)   ? 1 : 0);
         return d;
     }
     return eigs_value_new_null();
@@ -767,6 +797,7 @@ static void repl_eval(const char *src) {
      * is the way back to the console. */
     if (eigs_has_error() && vga_suspended()) {
         g_gfx_open = 0;
+        kbd_gfx_mode(0);
         vga_suspend(0);
     }
     if (eigs_has_error()) {
@@ -786,66 +817,172 @@ static void repl_eval(const char *src) {
     }
 }
 
+/* ---- the line editor (MD groundwork) ----
+ * Arrows/home/end/delete + up/down history over the M6 block-input
+ * REPL, with a visible inverse-video cursor (vga_cursor). Editing
+ * renders to the CONSOLE only; serial — a log, not a terminal — gets
+ * each line once, on submit, so the COM1 transcript stays faithful.
+ * A line edits within one console row: the editable length is capped
+ * at cols - prompt - 1 (78 on the fb console). */
+#define ED_PROMPT 6                      /* "eigs> " and "....> " */
+#define ED_HIST   8
+
+static char g_hist[ED_HIST][512];
+static int  g_hist_n, g_hist_next;
+
+/* Repaint line[0..len) after the prompt, blank what the previous
+ * render left behind, park the cursor at `cur`. */
+static void ed_draw(const char *line, int len, int cur, int *shown) {
+    vga_col_set(ED_PROMPT);
+    for (int i = 0; i < len; i++) vga_putc(line[i]);
+    for (int i = len; i < *shown; i++) vga_putc(' ');
+    *shown = len;
+    vga_col_set(ED_PROMPT + cur);
+}
+
+static void ed_prompt(const char *p) {
+    con_write(p);                        /* serial log + console */
+    vga_cursor(1);
+}
+
 void eigs_repl(void) {
     g_vga_on = 1;
     vga_clear();
     con_write("EigenScript REPL on EigenOS -- Enter evals. A line ending in ':'\n");
     con_write("opens a block: keep typing lines, a blank line runs it.\n");
-    con_write("eigs> ");
 
-    char line[512];
+    char line[512], draft[512];
     static char prog[4096];       /* accumulated block (M6 multi-line) */
-    int len  = 0;                 /* current line fill */
+    int len = 0, cur = 0, shown = 0;
+    int draft_len = 0;
+    int nav = -1;                 /* history offset; -1 = editing the draft */
     int plen = 0;                 /* accumulated block fill */
     int cont = 0;                 /* 1 = inside a ':'-opened block */
+    ed_prompt("eigs> ");
+
     for (;;) {
         int c = kbd_getchar();
         if (c < 0) { __asm__ volatile ("hlt"); continue; }   /* wait for a key */
+        int maxlen = vga_cols() - ED_PROMPT - 1;
+        if (maxlen > (int)sizeof(line) - 1) maxlen = (int)sizeof(line) - 1;
 
         if (c == '\n') {
-            con_putc('\n');
             line[len] = 0;
+            vga_cursor(0);
+            vga_col_set(ED_PROMPT + len);
+            vga_putc('\n');
+            serial_write(line);           /* the log's copy of the line */
+            serial_write("\n");
+            if (len > 0 && (g_hist_n == 0 ||
+                            strcmp(g_hist[(g_hist_next + ED_HIST - 1) % ED_HIST],
+                                   line) != 0)) {
+                memcpy(g_hist[g_hist_next], line, (size_t)len + 1);
+                g_hist_next = (g_hist_next + 1) % ED_HIST;
+                if (g_hist_n < ED_HIST) g_hist_n++;
+            }
+            nav = -1;
             /* Does this line open a block? Trailing ':' (spaces ignored). */
             int e = len;
             while (e > 0 && line[e - 1] == ' ') e--;
             int opens = (e > 0 && line[e - 1] == ':');
 
             if (!cont) {
-                if (len == 0) { con_write("eigs> "); continue; }
+                if (len == 0) { ed_prompt("eigs> "); continue; }
                 if (opens) {                      /* start accumulating */
                     plen = 0;
                     for (int i = 0; i < len; i++) prog[plen++] = line[i];
                     prog[plen++] = '\n';
                     cont = 1;
-                    con_write("....> ");
+                    ed_prompt("....> ");
                 } else {                          /* single line: eval now */
                     repl_eval(line);
-                    con_write("eigs> ");
+                    ed_prompt("eigs> ");
                 }
             } else {
                 if (len == 0) {                   /* blank line: run block */
                     prog[plen] = 0;
                     cont = 0;
                     repl_eval(prog);
-                    con_write("eigs> ");
+                    ed_prompt("eigs> ");
                 } else if (plen + len + 2 > (int)sizeof(prog)) {
                     con_write("error: block too large, discarded\n");
                     cont = 0;
-                    con_write("eigs> ");
+                    ed_prompt("eigs> ");
                 } else {                          /* keep accumulating */
                     for (int i = 0; i < len; i++) prog[plen++] = line[i];
                     prog[plen++] = '\n';
-                    con_write("....> ");
+                    ed_prompt("....> ");
                 }
             }
-            len = 0;
+            len = cur = shown = 0;
+        } else if (c == KEY_UP || c == KEY_DOWN) {
+            if (g_hist_n == 0) continue;
+            if (c == KEY_UP) {
+                if (nav + 1 >= g_hist_n) continue;
+                if (nav == -1) {                  /* park the in-progress line */
+                    memcpy(draft, line, (size_t)len);
+                    draft_len = len;
+                }
+                nav++;
+            } else {
+                if (nav == -1) continue;
+                nav--;
+            }
+            if (nav == -1) {
+                memcpy(line, draft, (size_t)draft_len);
+                len = draft_len;
+            } else {
+                const char *h = g_hist[(g_hist_next + ED_HIST - 1 - nav) % ED_HIST];
+                len = 0;
+                while (h[len] && len < maxlen) { line[len] = h[len]; len++; }
+            }
+            cur = len;
+            ed_draw(line, len, cur, &shown);
+        } else if (c == KEY_LEFT) {
+            if (cur > 0) { cur--; vga_col_set(ED_PROMPT + cur); }
+        } else if (c == KEY_RIGHT) {
+            if (cur < len) { cur++; vga_col_set(ED_PROMPT + cur); }
+        } else if (c == KEY_HOME) {
+            cur = 0; vga_col_set(ED_PROMPT);
+        } else if (c == KEY_END) {
+            cur = len; vga_col_set(ED_PROMPT + len);
+        } else if (c == KEY_DELETE) {
+            if (cur < len) {
+                memmove(line + cur, line + cur + 1, (size_t)(len - cur - 1));
+                len--;
+                ed_draw(line, len, cur, &shown);
+            }
         } else if (c == '\b') {
-            if (len > 0) { len--; con_write("\b \b"); }
-        } else if (c < 32 && c != '\t') {
-            /* ESC etc. — gfx_poll's business, not line input */
-        } else if (len < (int)sizeof(line) - 1) {
-            line[len++] = (char)c;
-            con_putc((char)c);                    /* echo */
+            if (cur > 0) {
+                memmove(line + cur - 1, line + cur, (size_t)(len - cur));
+                len--; cur--;
+                ed_draw(line, len, cur, &shown);
+            }
+        } else if ((kbd_mods() & KMOD_CTRL) && (c == 'a' || c == 'e' ||
+                                                c == 'u' || c == 'c')) {
+            if (c == 'a') { cur = 0; vga_col_set(ED_PROMPT); }
+            if (c == 'e') { cur = len; vga_col_set(ED_PROMPT + len); }
+            if (c == 'u') { len = cur = 0; ed_draw(line, len, cur, &shown); }
+            if (c == 'c') {                       /* cancel line AND block */
+                vga_cursor(0);
+                con_write("^C\n");
+                len = cur = shown = 0;
+                cont = 0; nav = -1;
+                ed_prompt("eigs> ");
+            }
+        } else if (c >= 32 && c < 127) {
+            if (len < maxlen) {
+                memmove(line + cur + 1, line + cur, (size_t)(len - cur));
+                line[cur] = (char)c;
+                len++; cur++;
+                if (cur == len && shown == len - 1) {
+                    vga_putc((char)c);            /* fast path: append */
+                    shown = len;
+                } else {
+                    ed_draw(line, len, cur, &shown);
+                }
+            }
         }
+        /* everything else (ESC, pgup/pgdn) is ignored at the REPL */
     }
 }

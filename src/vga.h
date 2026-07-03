@@ -19,6 +19,12 @@ void vga_put_at(int row, int col, const char *s, uint8_t attr);  /* fixed row */
 int  vga_rows(void);            /* active grid height (25 text / 48 fb) */
 int  vga_cols(void);
 
+/* REPL line editing (MD groundwork): a visible inverse-video cursor at
+ * the write position, and in-row repositioning for redraws. */
+void vga_cursor(int on);
+int  vga_col_get(void);
+void vga_col_set(int col);
+
 /* M9.5 mode plumbing (kernel_main drives these):
  *  - vga_fb_pending(): MB2 promised an RGB framebuffer — there is no
  *    text memory to write; buffer to the grid until activation.

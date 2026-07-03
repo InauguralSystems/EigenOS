@@ -205,8 +205,23 @@ upstream, never worked around.
       USB dd-path green; **OVMF/EFI green — GOP framebuffer at a
       different address renders the same console, EFI-blindness fixed
       as predicted**; `-vga none` falls back to the text console with
-      the gfx self-test a documented skip. Keydown-only key events and
-      no arrow keys yet (E0 scancodes) — MD's input-dispatch work.
+      the gfx self-test a documented skip.
+      **Input-dispatch groundwork for MD (DONE 2026-07-03):** the
+      recorded debts are paid — E0 extended scancodes (arrows, home/
+      end/delete/pgup/pgdn), modifier tracking (shift/ctrl/alt), a
+      key-EVENT stream (down AND up, with modifiers) beside the char
+      stream — gfx mode routes input to events so a quit key never
+      replays into the REPL — and the IntelliMouse wheel unlock
+      (sample-rate 200/100/80 knock; 4-byte packets; SDL-convention
+      `wheel` events, psmouse-style sign). On top of it: **REPL line
+      editing** — visible inverse-video cursor (console-cursor support
+      in vga.c), left/right/home/end/delete, insert-at-cursor, 8-entry
+      up/down history, ctrl-a/e/u/c — serial stays a faithful log (the
+      line is written once, on submit). QEMU-verified end-to-end:
+      recall-edit-eval (`1+2` → recalled → edited to `12` → 12),
+      keydown/keyup pairs, wheel ±1 both directions, button events,
+      draw.eigs regression. Remaining known subset: no gfx_rrect/
+      gfx_fb, key events have no SDL scancode field.
 - [ ] **MD — the desktop.** The general-purpose capstone: EigenOS as a
       personal computer in the full sense, and the niche answer to it —
       **windows are observed bindings**. A window system written in

@@ -11,6 +11,7 @@
  * Returns 1 if the mouse ACKed enable-streaming. */
 int  mouse_init(void);
 int  mouse_present(void);
+int  mouse_has_wheel(void);              /* IntelliMouse unlock succeeded */
 
 void mouse_irq(void);                    /* IRQ12: consume aux bytes */
 void mouse_byte(uint8_t b);              /* stray aux byte seen by kbd_irq */
@@ -22,8 +23,8 @@ int  mouse_x(void);
 int  mouse_y(void);
 int  mouse_buttons(void);                /* bit0=left bit1=right bit2=middle */
 
-/* Pop one packet: post-move position + buttons + whether it moved.
- * Returns 0 when the ring is empty. */
-int  mouse_next_packet(int *x, int *y, int *buttons, int *moved);
+/* Pop one packet: post-move position + buttons + whether it moved +
+ * signed wheel delta (0 without a wheel). Returns 0 when empty. */
+int  mouse_next_packet(int *x, int *y, int *buttons, int *moved, int *wheel);
 
 #endif /* EIGENOS_MOUSE_H */

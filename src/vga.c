@@ -20,6 +20,8 @@ static int g_row, g_col;
 enum { MODE_TEXT, MODE_FB_PENDING, MODE_FB };
 static int g_mode = MODE_TEXT;
 static int g_suspend;                     /* gfx owns the pixels */
+static int g_cursor;                      /* REPL: inverse-video cell at
+                                             the insertion point */
 
 int  vga_rows(void)      { return g_rows; }
 int  vga_cols(void)      { return g_cols; }
@@ -27,12 +29,38 @@ int  vga_suspended(void) { return g_suspend; }
 
 static void render_cell(int row, int col) {
     if (g_suspend) return;
+    uint8_t attr = g_ats[row][col];
+    if (g_cursor && row == g_row && col == g_col)
+        attr = (uint8_t)((attr >> 4) | (attr << 4));   /* inverse video */
     if (g_mode == MODE_FB)
-        fb_draw_cell(row, col, g_chs[row][col], g_ats[row][col]);
+        fb_draw_cell(row, col, g_chs[row][col], attr);
     else if (g_mode == MODE_TEXT && row < TEXT_ROWS && col < TEXT_COLS)
         VGA[row * TEXT_COLS + col] =
             (uint16_t)(unsigned char)g_chs[row][col] |
-            ((uint16_t)g_ats[row][col] << 8);
+            ((uint16_t)attr << 8);
+}
+
+/* The cursor is the implicit write position made visible: any op that
+ * moves it re-renders the vacated cell and the new one. */
+static void cursor_moved(int prev_row, int prev_col) {
+    if (!g_cursor) return;
+    if (prev_row != g_row || prev_col != g_col) render_cell(prev_row, prev_col);
+    render_cell(g_row, g_col);
+}
+
+void vga_cursor(int on) {
+    g_cursor = on ? 1 : 0;
+    render_cell(g_row, g_col);
+}
+
+int  vga_col_get(void) { return g_col; }
+
+void vga_col_set(int col) {
+    int pr = g_row, pc = g_col;
+    if (col < 0) col = 0;
+    if (col >= g_cols) col = g_cols - 1;
+    g_col = col;
+    cursor_moved(pr, pc);
 }
 
 static void set_cell(int row, int col, char c, uint8_t attr) {
@@ -103,15 +131,18 @@ static void newline(void) {
 }
 
 void vga_putc(char c) {
-    if (c == '\n') { newline(); return; }
-    if (c == '\r') { g_col = 0; return; }
+    int pr = g_row, pc = g_col;
+    if (c == '\n') { newline(); cursor_moved(pr, pc); return; }
+    if (c == '\r') { g_col = 0; cursor_moved(pr, pc); return; }
     if (c == '\b') {
         if (g_col > 0) { g_col--; set_cell(g_row, g_col, ' ', ATTR); }
+        cursor_moved(pr, pc);
         return;
     }
     if (c == '\t') { do { vga_putc(' '); } while (g_col % 4); return; }
     set_cell(g_row, g_col, c, ATTR);
     if (++g_col >= g_cols) newline();
+    cursor_moved(pr, pc);
 }
 
 void vga_puts(const char *s) {

@@ -1,9 +1,10 @@
-/* PS/2 keyboard driver (milestone-4).
+/* PS/2 keyboard driver (milestone-4; events + E0 keys for MD groundwork).
  *
  * QEMU (and a real 8042 after BIOS setup) delivers scancode set 1 by
  * default, so no controller reprogramming is needed here — just read
- * port 0x60 on IRQ1, translate, and buffer. US layout; a tracked shift
- * state uppercases letters and selects the shifted-symbol table (M6). */
+ * port 0x60 on IRQ1, translate, and buffer. US layout; tracked
+ * shift/ctrl/alt state; 0xE0-prefixed extended keys (arrows, home/end,
+ * delete, pgup/pgdn) map to KEY_* codes above the ASCII range. */
 #include "keyboard.h"
 #include "mouse.h"
 #include "io.h"
@@ -14,12 +15,20 @@
 #define ST_AUX     0x20          /* pending byte belongs to the aux port */
 #define RING_SZ    256           /* power of two */
 
+/* Char stream (REPL). */
 static char     g_ring[RING_SZ];
 static volatile unsigned g_head, g_tail;
-static int      g_shift;
+
+/* Event stream (gfx_poll): code:8 | down:8 | mods:8, down+up both. */
+static uint32_t g_ering[RING_SZ];
+static volatile unsigned g_ehead, g_etail;
+
+static int g_mods;               /* KMOD_* bitmask */
+static int g_e0;                 /* saw an 0xE0 prefix byte */
+static int g_gfx;                /* events mode (gfx app owns input) */
 
 static const char kmap[128] = {
-    [0x01]=27,                   /* ESC — gfx_poll reports it as "escape" */
+    [0x01]=27,                   /* ESC */
     [0x02]='1',[0x03]='2',[0x04]='3',[0x05]='4',[0x06]='5',
     [0x07]='6',[0x08]='7',[0x09]='8',[0x0A]='9',[0x0B]='0',
     [0x0C]='-',[0x0D]='=',[0x0E]='\b',[0x0F]='\t',
@@ -47,10 +56,27 @@ static const char kmap_shift[128] = {
     [0x33]='<',[0x34]='>',[0x35]='?',
 };
 
+/* 0xE0-prefixed keys (set 1) -> KEY_* codes. */
+static const unsigned char kmap_e0[128] = {
+    [0x48]=KEY_UP,  [0x50]=KEY_DOWN, [0x4B]=KEY_LEFT, [0x4D]=KEY_RIGHT,
+    [0x47]=KEY_HOME,[0x4F]=KEY_END,  [0x53]=KEY_DELETE,
+    [0x49]=KEY_PGUP,[0x51]=KEY_PGDN,
+    [0x1C]='\n',                 /* keypad enter */
+    [0x35]='/',                  /* keypad slash */
+};
+
 void keyboard_init(void) {
-    g_head = g_tail = 0;
-    g_shift = 0;
+    g_head = g_tail = g_ehead = g_etail = 0;
+    g_mods = g_e0 = g_gfx = 0;
 }
+
+void kbd_gfx_mode(int on) {
+    g_gfx = on ? 1 : 0;
+    g_head = g_tail = 0;         /* no stale REPL chars after a gfx app */
+    g_ehead = g_etail = 0;       /* and no stale events before one */
+}
+
+int kbd_mods(void) { return g_mods; }
 
 static void ring_push(char c) {
     unsigned next = (g_head + 1) & (RING_SZ - 1);
@@ -59,23 +85,51 @@ static void ring_push(char c) {
     g_head = next;
 }
 
+static void ering_push(int code, int down) {
+    unsigned next = (g_ehead + 1) & (RING_SZ - 1);
+    if (next == g_etail) return;
+    g_ering[g_ehead] = (uint32_t)(code & 0xFF) |
+                       ((uint32_t)(down & 1) << 8) |
+                       ((uint32_t)(g_mods & 0xFF) << 16);
+    g_ehead = next;
+}
+
 void kbd_irq(void) {
     /* One 8042 serves both devices: if the pending byte is aux-flagged
      * it is mouse traffic that raced onto IRQ1 — route it (M9.5). */
     if (inb(KBD_STATUS) & ST_AUX) { mouse_byte(inb(KBD_DATA)); return; }
     uint8_t sc = inb(KBD_DATA);
-    if (sc == 0x2A || sc == 0x36) { g_shift = 1; return; }   /* shift down */
-    if (sc == 0xAA || sc == 0xB6) { g_shift = 0; return; }   /* shift up   */
-    if (sc & 0x80) return;                                    /* other release */
-    char c;
-    if (g_shift && kmap_shift[sc & 0x7F]) {
-        c = kmap_shift[sc & 0x7F];                            /* shifted symbol */
-    } else {
-        c = kmap[sc & 0x7F];
-        if (!c) return;
-        if (g_shift && c >= 'a' && c <= 'z') c = (char)(c - 32);
+
+    if (sc == 0xE0) { g_e0 = 1; return; }
+    int e0 = g_e0;
+    g_e0 = 0;
+
+    int idx  = sc & 0x7F;
+    int down = !(sc & 0x80);
+
+    /* Modifiers (E0 0x1D/0x38 are right-ctrl/alt-gr — same bits). The
+     * E0 2A/AA "fake shift" bytes some sets emit around extended keys
+     * must NOT flip real shift state. */
+    if (idx == 0x2A || idx == 0x36) {
+        if (!e0) g_mods = down ? (g_mods | KMOD_SHIFT) : (g_mods & ~KMOD_SHIFT);
+        return;
     }
-    ring_push(c);
+    if (idx == 0x1D) { g_mods = down ? (g_mods | KMOD_CTRL) : (g_mods & ~KMOD_CTRL); return; }
+    if (idx == 0x38) { g_mods = down ? (g_mods | KMOD_ALT)  : (g_mods & ~KMOD_ALT);  return; }
+
+    int c;
+    if (e0) {
+        c = kmap_e0[idx];
+    } else if ((g_mods & KMOD_SHIFT) && kmap_shift[idx]) {
+        c = kmap_shift[idx];                          /* shifted symbol */
+    } else {
+        c = kmap[idx];
+        if ((g_mods & KMOD_SHIFT) && c >= 'a' && c <= 'z') c -= 32;
+    }
+    if (!c) return;
+
+    if (g_gfx) ering_push(c, down);                   /* down AND up */
+    else if (down) ring_push((char)c);
 }
 
 int kbd_getchar(void) {
@@ -83,4 +137,14 @@ int kbd_getchar(void) {
     char c = g_ring[g_tail];
     g_tail = (g_tail + 1) & (RING_SZ - 1);
     return (int)(unsigned char)c;
+}
+
+int kbd_next_event(int *code, int *down, int *mods) {
+    if (g_etail == g_ehead) return 0;
+    uint32_t v = g_ering[g_etail];
+    g_etail = (g_etail + 1) & (RING_SZ - 1);
+    *code = (int)(v & 0xFF);
+    *down = (int)((v >> 8) & 1);
+    *mods = (int)((v >> 16) & 0xFF);
+    return 1;
 }
