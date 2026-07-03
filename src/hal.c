@@ -389,6 +389,281 @@ static void register_blk(void) {
     eigs_register_function("blk_flush",   b_blk_flush);
 }
 
+/* ---- M10: the fs surface, un-carved ----
+ * The freestanding profile carves read_text/write_text/read_bytes_buf/
+ * write_bytes/file_exists/rename/remove_file out of the runtime; here
+ * EigenOS provides those names itself through the embed API — the
+ * vitals/tasks/gfx pattern. Each builtin delegates to the FS DAEMON
+ * STATE (g_fs_state), a dedicated EigsState running the byte-unmodified
+ * demos/regionfs.eigs; the delegation is task_eval's proven shape (park
+ * the calling state mid-builtin, switch, eval, switch back — the fsd is
+ * always idle between calls, so there is no VM nesting on any state).
+ * Bytes cross the boundary BY COPY through a C staging buffer, per the
+ * cross-state rule. One state owns the disk: any number of stores
+ * (import tidefs) on any states layer over these builtins, and the
+ * single mount authority is the fsd.
+ *
+ * Mount policy: mount-by-magic IS the authorization — a disk carrying
+ * a valid regionfs superblock was deliberately formatted, so the boot
+ * probe may mount (and thereby unlock writes) on its own; a foreign
+ * disk (the T3200's Linux MBR) refuses the mount and writes stay
+ * locked. fs_format remains the one manual act: virgin disks need an
+ * operator's blk_unlock first. */
+static EigsState *g_fs_state;
+static int g_fs_mounted;
+
+static EigsState *cur_state(void) {
+    return g_active_task >= 0 ? g_tasks[g_active_task].st : g_primary;
+}
+
+/* run one expression on the fsd; returns its numeric result (or `fail`
+ * on error / non-number). Caller must already be SWITCHED to the fsd. */
+static double fsd_eval_num(const char *src, double fail) {
+    EigsValue *v = eigs_eval_string(src);
+    double out = fail;
+    if (eigs_has_error()) eigs_clear_error();
+    else if (v && eigs_value_type(v) == EIGS_TYPE_NUM) out = eigs_value_as_num(v);
+    if (v) eigs_value_release(v);
+    return out;
+}
+
+static void fsd_set_str(const char *g, const char *s) {
+    EigsValue *v = eigs_value_new_string(s);
+    eigs_set_global(g, v);
+    eigs_value_release(v);
+}
+
+static int fs_ensure_mounted(void) {
+    if (!g_fs_state) return 0;
+    if (g_fs_mounted) return 1;
+    EigsState *back = cur_state();
+    eigs_thread_switch(g_fs_state);
+    if (fsd_eval_num("regionfs.mount of []", 0) == 1.0) g_fs_mounted = 1;
+    eigs_thread_switch(back);
+    return g_fs_mounted;
+}
+
+/* copy a path argument (string value) into a C buffer; 1 on success */
+static int path_arg(EigsValue *v, char *dst, int cap) {
+    const char *s = eigs_value_as_string(v);
+    if (!s || !s[0]) return 0;
+    int i = 0;
+    for (; s[i] && i < cap - 1; i++) dst[i] = s[i];
+    dst[i] = 0;
+    return 1;
+}
+
+/* extract list|buffer byte content into a fresh C buffer (caller frees) */
+static unsigned char *bytes_arg(EigsValue *d, int *out_n) {
+    int n, i;
+    unsigned char *tmp;
+    if (!d) return NULL;
+    if (eigs_value_type(d) == EIGS_TYPE_BUFFER) {
+        n = eigs_value_buffer_len(d);
+        tmp = malloc(n > 0 ? (size_t)n : 1);
+        if (!tmp) return NULL;
+        for (i = 0; i < n; i++) tmp[i] = (unsigned char)eigs_value_buffer_get(d, i);
+    } else if (eigs_value_type(d) == EIGS_TYPE_LIST) {
+        n = eigs_value_list_len(d);
+        tmp = malloc(n > 0 ? (size_t)n : 1);
+        if (!tmp) return NULL;
+        for (i = 0; i < n; i++) {
+            EigsValue *it = eigs_value_list_get(d, i);
+            tmp[i] = (unsigned char)((it && eigs_value_type(it) == EIGS_TYPE_NUM)
+                                         ? eigs_value_as_num(it) : 0.0);
+            if (it) eigs_value_release(it);
+        }
+    } else return NULL;
+    *out_n = n;
+    return tmp;
+}
+
+/* read a whole region into a C staging buffer via the fsd; returns the
+ * buffer (caller frees) and its length, or NULL when absent/unmounted. */
+static unsigned char *fs_read_staged(const char *path, int *out_n) {
+    if (!fs_ensure_mounted()) return NULL;
+    EigsState *back = cur_state();
+    eigs_thread_switch(g_fs_state);
+    fsd_set_str("fsd_path", path);
+    EigsValue *v = eigs_eval_string("regionfs.read_bytes_buf of fsd_path");
+    unsigned char *tmp = NULL;
+    int n = 0;
+    if (eigs_has_error()) eigs_clear_error();
+    else if (v && eigs_value_type(v) == EIGS_TYPE_BUFFER) {
+        n = eigs_value_buffer_len(v);
+        tmp = malloc(n > 0 ? (size_t)n + 1 : 1);
+        if (tmp)
+            for (int i = 0; i < n; i++)
+                tmp[i] = (unsigned char)eigs_value_buffer_get(v, i);
+    }
+    if (v) eigs_value_release(v);               /* released on the fsd */
+    eigs_thread_switch(back);
+    if (tmp) *out_n = n;
+    return tmp;
+}
+
+/* stage C bytes into the fsd and run a write; returns the op's result */
+static int fs_write_staged(const char *path, const unsigned char *bytes,
+                           int n, int append) {
+    if (!fs_ensure_mounted()) return 0;
+    EigsState *back = cur_state();
+    eigs_thread_switch(g_fs_state);
+    fsd_set_str("fsd_path", path);
+    EigsValue *bv = eigs_value_new_buffer(n);
+    for (int i = 0; i < n; i++) eigs_value_buffer_set(bv, i, (double)bytes[i]);
+    eigs_set_global("fsd_data", bv);
+    eigs_value_release(bv);
+    EigsValue *ap = eigs_value_new_num(append ? 1 : 0);
+    eigs_set_global("fsd_app", ap);
+    eigs_value_release(ap);
+    int ok = fsd_eval_num(
+        "regionfs.write_bytes of [fsd_path, fsd_data, fsd_app]", 0) == 1.0;
+    EigsValue *nul = eigs_value_new_null();     /* drop the staged bytes */
+    eigs_set_global("fsd_data", nul);
+    eigs_value_release(nul);
+    eigs_thread_switch(back);
+    return ok;
+}
+
+static EigsValue *b_fs_file_exists(EigsValue *a) {
+    char p[64];
+    if (!path_arg(a, p, sizeof p) || !fs_ensure_mounted())
+        return eigs_value_new_num(0);
+    EigsState *back = cur_state();
+    eigs_thread_switch(g_fs_state);
+    fsd_set_str("fsd_path", p);
+    double r = fsd_eval_num("regionfs.file_exists of fsd_path", 0);
+    eigs_thread_switch(back);
+    return eigs_value_new_num(r);
+}
+
+static EigsValue *b_fs_read_bytes_buf(EigsValue *a) {
+    char p[64];
+    int n = 0;
+    if (!path_arg(a, p, sizeof p)) return eigs_value_new_null();
+    unsigned char *tmp = fs_read_staged(p, &n);
+    if (!tmp) return eigs_value_new_null();
+    EigsValue *out = eigs_value_new_buffer(n);
+    for (int i = 0; i < n; i++) eigs_value_buffer_set(out, i, (double)tmp[i]);
+    free(tmp);
+    return out;
+}
+
+static EigsValue *b_fs_read_text(EigsValue *a) {
+    char p[64];
+    int n = 0;
+    if (!path_arg(a, p, sizeof p)) return eigs_value_new_null();
+    unsigned char *tmp = fs_read_staged(p, &n);
+    if (!tmp) return eigs_value_new_null();
+    tmp[n] = 0;                    /* C-string reality: truncates at NUL */
+    EigsValue *out = eigs_value_new_string((const char *)tmp);
+    free(tmp);
+    return out;
+}
+
+static EigsValue *b_fs_write_bytes(EigsValue *a) {   /* [path, bytes {,app}] */
+    if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
+    char p[64];
+    EigsValue *pv = eigs_value_list_get(a, 0);
+    int okp = pv && path_arg(pv, p, sizeof p);
+    if (pv) eigs_value_release(pv);
+    if (!okp) return eigs_value_new_num(0);
+    EigsValue *dv = eigs_value_list_get(a, 1);
+    int n = 0;
+    unsigned char *tmp = bytes_arg(dv, &n);
+    if (dv) eigs_value_release(dv);
+    if (!tmp) return eigs_value_new_num(0);
+    int append = eigs_value_list_len(a) >= 3 && list_num(a, 2) != 0.0;
+    int ok = fs_write_staged(p, tmp, n, append);
+    free(tmp);
+    return eigs_value_new_num(ok);
+}
+
+static EigsValue *b_fs_write_text(EigsValue *a) {    /* [path, str] */
+    if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
+    char p[64];
+    EigsValue *pv = eigs_value_list_get(a, 0);
+    int okp = pv && path_arg(pv, p, sizeof p);
+    if (pv) eigs_value_release(pv);
+    if (!okp) return eigs_value_new_num(0);
+    EigsValue *sv = eigs_value_list_get(a, 1);
+    const char *s = sv ? eigs_value_as_string(sv) : NULL;
+    if (!s) {
+        if (sv) eigs_value_release(sv);
+        return eigs_value_new_num(0);
+    }
+    int n = (int)strlen(s);
+    unsigned char *tmp = malloc(n > 0 ? (size_t)n : 1);
+    if (!tmp) {
+        eigs_value_release(sv);
+        return eigs_value_new_num(0);
+    }
+    for (int i = 0; i < n; i++) tmp[i] = (unsigned char)s[i];
+    eigs_value_release(sv);
+    int ok = fs_write_staged(p, tmp, n, 0);
+    free(tmp);
+    return eigs_value_new_num(ok);
+}
+
+static EigsValue *b_fs_rename(EigsValue *a) {        /* [old, new] */
+    if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
+    char po[64], pn[64];
+    EigsValue *ov = eigs_value_list_get(a, 0);
+    EigsValue *nv = eigs_value_list_get(a, 1);
+    int ok = ov && nv && path_arg(ov, po, sizeof po) && path_arg(nv, pn, sizeof pn);
+    if (ov) eigs_value_release(ov);
+    if (nv) eigs_value_release(nv);
+    if (!ok || !fs_ensure_mounted()) return eigs_value_new_num(0);
+    EigsState *back = cur_state();
+    eigs_thread_switch(g_fs_state);
+    fsd_set_str("fsd_path", po);
+    fsd_set_str("fsd_path2", pn);
+    double r = fsd_eval_num("regionfs.rename of [fsd_path, fsd_path2]", 0);
+    eigs_thread_switch(back);
+    return eigs_value_new_num(r);
+}
+
+static EigsValue *b_fs_remove_file(EigsValue *a) {
+    char p[64];
+    if (!path_arg(a, p, sizeof p) || !fs_ensure_mounted())
+        return eigs_value_new_num(0);
+    EigsState *back = cur_state();
+    eigs_thread_switch(g_fs_state);
+    fsd_set_str("fsd_path", p);
+    double r = fsd_eval_num("regionfs.remove_file of fsd_path", 0);
+    eigs_thread_switch(back);
+    return eigs_value_new_num(r);
+}
+
+static EigsValue *b_fs_mount(EigsValue *a) {         /* explicit (re)mount */
+    (void)a;
+    g_fs_mounted = 0;
+    return eigs_value_new_num(fs_ensure_mounted());
+}
+
+static EigsValue *b_fs_format(EigsValue *a) {        /* the manual act */
+    (void)a;
+    if (!g_fs_state) return eigs_value_new_num(0);
+    EigsState *back = cur_state();
+    eigs_thread_switch(g_fs_state);
+    double r = fsd_eval_num("regionfs.format of []", 0);
+    eigs_thread_switch(back);
+    if (r == 1.0) g_fs_mounted = 1;
+    return eigs_value_new_num(r);
+}
+
+static void register_fs(void) {
+    eigs_register_function("file_exists",    b_fs_file_exists);
+    eigs_register_function("read_text",      b_fs_read_text);
+    eigs_register_function("read_bytes_buf", b_fs_read_bytes_buf);
+    eigs_register_function("write_text",     b_fs_write_text);
+    eigs_register_function("write_bytes",    b_fs_write_bytes);
+    eigs_register_function("rename",         b_fs_rename);
+    eigs_register_function("remove_file",    b_fs_remove_file);
+    eigs_register_function("fs_mount",       b_fs_mount);
+    eigs_register_function("fs_format",      b_fs_format);
+}
+
 /* M9.5: pixels and a pointer — ext_gfx's second backend. The same
  * builtin names Tidepool's loop calls hosted (gfx_open/clear/rect/line/
  * point/circle/text/present/poll/ticks/delay), backed by the LFB shadow
@@ -897,6 +1172,7 @@ static void register_task_side(void) {
     eigs_register_function("win_w",       b_win_w);
     eigs_register_function("win_h",       b_win_h);
     register_vitals();
+    register_fs();      /* windows get the un-carved fs surface too */
 }
 
 /* M7.5: the ROM bundle. build/bundle.c (generated by tools/mkbundle.py)
@@ -926,6 +1202,32 @@ int eigs_run_demo(void) {
     serial_write("[m9] task builtins registered (spawn/step/read/alive/kill)\n");
     register_blk();
     serial_write("[m10] block builtins registered (blk_read/write locked)\n");
+
+    /* M10: the fs daemon state — a dedicated EigsState running the
+     * byte-unmodified regionfs module; the un-carved fs builtins
+     * delegate into it. Created after the bundle provider so `import
+     * regionfs` resolves from ROM. */
+    g_fs_state = eigs_state_new();
+    if (g_fs_state && eigs_thread_switch(g_fs_state)) {
+        eigs_state_init_runtime(g_fs_state);
+        register_blk();                       /* regionfs's substrate */
+        EigsValue *fr = eigs_eval_string("import regionfs");
+        if (fr) eigs_value_release(fr);
+        if (eigs_has_error()) {
+            eigs_clear_error();
+            eigs_thread_switch(st);
+            g_fs_state = 0;
+            serial_write("[m10] fs daemon FAILED to load regionfs\n");
+        } else {
+            eigs_thread_switch(st);
+            register_fs();
+            serial_write("[m10] fs builtins registered "
+                         "(read/write/rename over the regionfs state)\n");
+        }
+    } else {
+        g_fs_state = 0;
+        serial_write("[m10] fs daemon state creation FAILED\n");
+    }
     register_gfx();
     serial_write("[m9.5] gfx builtins registered (fb shadow + PS/2 pointer)\n");
 
@@ -1091,6 +1393,25 @@ int eigs_run_demo(void) {
     } else {
         serial_write("[m9.5] gfx self-test skipped (VGA text console)\n");
         vga_put_at(23, 0, "M9.5: gfx skipped (text console)", 0x08);
+    }
+
+    /* m10: the storage stack, end to end — mount-by-magic probe (a
+     * valid superblock is the write authorization; a foreign disk
+     * refuses and stays locked). Read-only unless a store exists. */
+    if (g_fs_state) {
+        if (fs_ensure_mounted()) {
+            EigsState *back = cur_state();
+            eigs_thread_switch(g_fs_state);
+            double nf = fsd_eval_num("len of (regionfs.list_files of [])", -1);
+            eigs_thread_switch(back);
+            serial_write("[m10] fs: regionfs mounted, ");
+            serial_write_dec((uint64_t)(nf < 0 ? 0 : nf));
+            serial_write(" file(s) OK\n");
+        } else {
+            serial_write(ata_present()
+                             ? "[m10] fs: no store on disk (mount refused; writes stay locked)\n"
+                             : "[m10] fs: no disk\n");
+        }
     }
 
     if (!stack_canary_ok()) {

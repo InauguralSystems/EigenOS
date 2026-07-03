@@ -376,7 +376,7 @@ upstream, never worked around.
 
 ## Phase 4 — the durable, replayable machine
 
-- [~] **M10 — storage: tidelog as the filesystem.** The general need:
+- [x] **M10 — storage: tidelog as the filesystem (DONE 2026-07-03).** The general need:
       files that survive a reboot. The niche answer: a log-structured,
       crash-recoverable store with time-travel reads (tidelog proved the
       whole design hosted — CBOR codec, every-offset crash sweep,
@@ -475,10 +475,35 @@ upstream, never worked around.
       behind the reboot — time travel over durable machine state on
       bare metal; store_compact live on the metal too. Constraint
       noted: store paths ≤ 12 chars (the ".compact" temp must fit
-      regionfs's 20-char names). REMAINING for M10: the un-carve
-      story — read_text/write_bytes/import backed by the store for
-      the C runtime (the fs-provider seam), and an [m10] boot
-      self-test row exercising the stack end to end.
+      regionfs's 20-char names).
+      **The un-carve (DONE 2026-07-03)** — the carved fs builtins
+      (`read_text`, `write_text`, `read_bytes_buf`, `write_bytes`,
+      `file_exists`, `rename`, `remove_file`, + EigenOS's `fs_mount`/
+      `fs_format`) are provided by hal.c through the embed API — the
+      vitals/tasks/gfx pattern, no upstream change. Each delegates to
+      the FS DAEMON STATE: a dedicated EigsState running the
+      byte-unmodified regionfs module, reached by task_eval's proven
+      park-switch-eval-return shape (the fsd is always idle between
+      calls — no VM nesting), bytes crossing BY COPY through a C
+      staging buffer. This also fixed the layering: `tidefs` is now
+      cbor+store only, its bare fs calls resolving to the delegates —
+      ONE mount authority (the fsd), stores usable from any state,
+      windows included (register_task_side gets the fs surface).
+      Mount policy sharpened: mount-by-magic IS the authorization, so
+      the boot self-test probes it — "[m10] fs: regionfs mounted, N
+      file(s)" on a store-bearing disk, "no store (mount refused;
+      writes stay locked)" on a foreign one. QEMU-proven: bare
+      `write_text`/`read_text`/`file_exists` at the REPL; the
+      relayered store opened the PREVIOUS session's compacted log
+      through the new plumbing (store.eigs → C delegate → fsd →
+      regionfs → ATA); a put, a reboot, and both the text file and
+      the new key recovered, with the boot probe counting 2 files.
+      DISPOSITION on `load_file`/`import`/the package tree: they stay
+      ROM-bundle — on EigenOS the image IS the software distribution
+      and the store serves DATA; a store-consulting import is a
+      deliberate non-goal until M12's .eigs drivers give a reason to
+      load code from disk. With that disposition, M10's arc is
+      complete.
 - [ ] **M11 — the system journal.** The trace tape as machine journal:
       `prev of` and `state_at` against system state, boot-to-now history
       as a first-class object, crash recovery as replay rather than fsck

@@ -45,17 +45,17 @@ OBJS   := build/boot.o build/kernel.o build/pmm.o build/serial.o \
 # image, served via the eigs_set_source_provider seam — `import` on bare
 # metal with no filesystem. Regenerates when any source or the tool moves.
 #
-# M10: `import tidefs` = tidelog's store mounted on regionfs. The module
-# is a BUILD-TIME CONCATENATION (the load_file composition tidelog.eigs
-# does hosted, done here instead — load_file is carved freestanding):
-# regionfs first, so its defines provide the carved fs-builtin names
-# (write_bytes/read_bytes_buf/rename/file_exists) in the same scope the
-# byte-unmodified store resolves them from. Couples to the sibling
-# ../tidelog checkout, like ../EigenScript.
+# M10: `import tidefs` = tidelog's store, byte-unmodified (a build-time
+# concatenation of cbor + store — the load_file composition tidelog.eigs
+# does hosted; load_file is carved freestanding). Its bare fs calls
+# (write_bytes/read_bytes_buf/rename/file_exists) resolve to the
+# UN-CARVED builtins hal.c registers, which delegate to the fs daemon
+# state running regionfs — one mount authority, stores on any state.
+# Couples to the sibling ../tidelog checkout, like ../EigenScript.
 TIDELOG := ../tidelog
-build/gen/tidefs.eigs: demos/regionfs.eigs $(TIDELOG)/src/cbor.eigs $(TIDELOG)/src/store.eigs | build
+build/gen/tidefs.eigs: $(TIDELOG)/src/cbor.eigs $(TIDELOG)/src/store.eigs | build
 	mkdir -p build/gen
-	{ cat demos/regionfs.eigs; echo; cat $(TIDELOG)/src/cbor.eigs; echo; cat $(TIDELOG)/src/store.eigs; } > $@
+	{ cat $(TIDELOG)/src/cbor.eigs; echo; cat $(TIDELOG)/src/store.eigs; } > $@
 
 BUNDLE_SRCS := $(wildcard $(EIGS)/lib/*.eigs) $(wildcard demos/*.eigs) build/gen/tidefs.eigs
 KERNEL := build/EigenOS.elf

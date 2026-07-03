@@ -215,24 +215,22 @@ rejects ELF64, so GRUB does the loading.
   E0 keys (arrows/home/end/delete), keyup events + modifiers, the
   IntelliMouse wheel, and REPL line editing with a visible cursor and
   up/down history.
-- [~] **M10** — storage: tidelog-style crash-recoverable log as the
-  filesystem, over an ATA driver. Landed so far: polled ATA PIO
-  (LBA48, bounded waits, ATAPI skipped) + `blk_*` builtins speaking
-  buffers, and `import regionfs` — the byte-region layer in pure
-  EigenScript giving tidelog's file-shaped seam (`read_bytes_buf`,
-  append `write_bytes`, atomic `rename`, `remove_file`) over a
-  double-buffered-superblock layout whose commit discipline earns
-  rename(2)'s atomicity with no kernel underneath, crash-swept at
-  every sector-write boundary hosted. Mount verifies the magic
-  before unlocking writes (a Linux disk never unlocks); files
-  survive guest reboots. And **`import tidefs` — tidelog's
-  crash-recoverable store, byte-unmodified, mounted on it**: put a
-  key at the REPL, reboot the machine, `store_open` replays the log
-  and the value is back — and `store_get_at` reads past states from
-  behind the reboot. The durability primitives tidelog drove into
-  the language hosted (#248–250) re-proven with no OS underneath,
-  zero code changes. Next: un-carve the C runtime's fs builtins
-  onto the store
+- [x] **M10** — storage: tidelog-style crash-recoverable log as the
+  filesystem, over an ATA driver. Polled ATA PIO (LBA48, bounded
+  waits, ATAPI skipped) + `blk_*` builtins speaking buffers;
+  `regionfs`, the byte-region layer in pure EigenScript, whose
+  double-buffered-superblock commit discipline earns rename(2)'s
+  atomicity with no kernel underneath (crash-swept at every
+  sector-write boundary hosted); **tidelog's store, byte-unmodified,
+  mounted on it** — put a key, reboot the machine, `store_open`
+  replays the log and the value is back, `store_get_at` reads past
+  states from behind the reboot; and the **un-carved fs surface**:
+  `read_text`/`write_text`/`write_bytes`/`read_bytes_buf`/
+  `file_exists`/`rename`/`remove_file` work bare at the REPL (and in
+  windows), delegating to an fs-daemon state that owns the one
+  mount. Mount-by-magic is the write authorization — a Linux disk
+  never unlocks. The boot self-test probes the whole stack:
+  `[m10] fs: regionfs mounted, N file(s)`.
 - [ ] **M11** — the system journal: trace tape over machine state;
   `prev of` / `state_at` against the computer itself; recovery = replay
 - [ ] **M12** — devices as `.eigs` drivers (port I/O, MMIO, IRQ callbacks
