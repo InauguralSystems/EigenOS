@@ -1,0 +1,6 @@
+# M9 demo task: healthy worker — progress advances every step.
+progress is 0.0
+
+define step() as:
+    progress is progress + 1
+    return progress

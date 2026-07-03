@@ -1,0 +1,10 @@
+# M9 demo task: a stalled worker. It made some initial progress (3) then
+# wedged — busy every step, progress never moves again. The scheduler's
+# observer reads its progress as `stable` and can deschedule it:
+# scheduling policy as an observer predicate.
+progress is 3.0
+junk is 0.0
+
+define step() as:
+    junk is junk + 0.001
+    return progress

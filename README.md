@@ -167,8 +167,11 @@ rejects ELF64, so GRUB does the loading.
   counters as builtins + the bundled `vitals` module; a quiet heap reads
   `stable`/`equilibrium` through the language's own observer — the
   machine observes itself at every boot (VGA row 21).
-- [ ] **M9** — multitasking: task = `EigsState`, the scheduler as an
-  observer loop (forces the runtime's real scheduler/concurrency story)
+- [x] **M9** — multitasking: a task is an `EigsState`, a step is one
+  eval, switched on one CPU thread via the upstream `eigs_thread_switch`
+  seam (EigenScript PR #363); the scheduler is EigenScript and a stalled
+  task's `progress` reads `stable` — scheduling policy as an observer
+  predicate.
 - [ ] **M10** — storage: tidelog-style crash-recoverable log as the
   filesystem, over an ATA driver
 - [ ] **M11** — the system journal: trace tape over machine state;

@@ -160,17 +160,26 @@ upstream, never worked around.
       `vitals.uptime_s of []` → seconds since boot. A leak now reads as
       `improving`/`diverging` on heap_pressure long before it is a
       crash. core2duo/3840 gate green.
-- [ ] **M9 — multitasking.** The general need: run two things at once.
-      The niche answer: a task is an `EigsState` (the multi-state
-      embedding API exists — docs/EMBEDDING.md upstream), scheduled
-      cooperatively first, and the scheduler is an observer loop over
-      task vitals — scheduling policy written in the language's own
-      predicates. **Highest language-gap yield on the roadmap**: the
-      freestanding profile currently stubs all 15 pthread symbols to
-      single-thread no-ops, so this forces the real story for the
-      scheduler HAL roots (spawn/yield/park/unpark + CAS from the
-      FREESTANDING ledger) and for what spawn/channel mean without
-      pthreads underneath.
+- [x] **M9 — multitasking (DONE 2026-07-03).** The niche answer held:
+      **a task IS an `EigsState`** — its own global env, module cache,
+      observer thresholds — and a step is one eval on it. The upstream
+      seam is `eigs_thread_switch` (EigenScript PR #363): parks the
+      calling thread's attachment with NO teardown and activates another
+      state's, all on the single CPU thread; the arena/freelists/VM live
+      on the EigsThread and survive the switch. hal.c exposes
+      `task_spawn/step/read/alive/kill` (a task program is a bundle
+      module with a `step()` fn); only numbers cross states. The
+      **scheduler is EigenScript** (`demos/sched.eigs` round-robins;
+      policy is the observer): a task whose `progress` reads `stable` is
+      stalled. Boot self-test (VGA row 22): spawn task_counter, step ×3,
+      read progress = 3, kill. REPL-verified via sendkey: two tasks
+      (task_counter, task_stuck) stepped in a loop — `stable of pa` = 0
+      (healthy, advancing), `stable of pb` = 1 (stalled) — scheduling
+      policy as an observer predicate, live on the console. Cost a real
+      bug: the first cut matched attachments by `&eigs_current`, which
+      miscompiles under the hand-rolled TLS → every switch re-attached →
+      16 MiB arena leak per step → OOM; fixed to identify by state (PR
+      #363). core2duo/3840 gate green.
 
 - [ ] **M9.5 — pixels and a pointer.** The Multiboot2 framebuffer tag
       gets GRUB/VBE to hand over a linear framebuffer (works on the
