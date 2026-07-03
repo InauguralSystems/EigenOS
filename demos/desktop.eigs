@@ -1,0 +1,93 @@
+# MD phase 1: the desktop skeleton — windows ARE observed bindings.
+#
+# window = task = EigsState (M9); pixels = M9.5 viewports. The WM is
+# script: it draws chrome, steps each window task (a task draws only
+# inside its own viewport — the clip is the kernel's, not politeness),
+# forwards keys to the focused window as codes (numbers only cross
+# states), and reads each window's health through the observer: it
+# samples progress into a binding every frame, and a hung window's
+# trajectory IS `stable` — the "task manager" every desktop bolts on
+# afterward falls out of the language for free.
+#
+#   import desktop     click focuses - keys go to the focused window
+#                      (counter: any key adds 10) - q quits
+#
+# Three windows: win_counter (draws + takes keys), win_bounce (draws,
+# always advancing), task_stuck (the M9 wedged worker, unchanged — its
+# title bar turns red because its progress reads stable).
+
+define chrome(cx, cy, cw, ch, focused, stalled) as:
+    # border ring + title bar + content backdrop for one window
+    gfx_rect of [cx - 2, cy - 26, cw + 4, ch + 30, 70, 76, 96]
+    if stalled == 1:
+        gfx_rect of [cx, cy - 24, cw, 22, 168, 40, 40]
+    if stalled == 0:
+        if focused == 1:
+            gfx_rect of [cx, cy - 24, cw, 22, 46, 90, 150]
+        if focused == 0:
+            gfx_rect of [cx, cy - 24, cw, 22, 40, 46, 64]
+    gfx_rect of [cx, cy, cw, ch, 14, 16, 26]
+    return 0
+
+ok is gfx_open of [1024, 768, "EigenOS desktop"]
+if ok == 0:
+    print of "desktop: no framebuffer (text console boot)"
+if ok == 1:
+    a is task_spawn of "win_counter"
+    task_view of [a, 60, 104, 300, 160]
+    b is task_spawn of "win_bounce"
+    task_view of [b, 420, 164, 360, 240]
+    c is task_spawn of "task_stuck"
+    task_view of [c, 120, 420, 260, 120]
+    f is a
+    pa is 0.0
+    pb is 0.0
+    pc is 0.0
+    running is 1
+    loop while running == 1:
+        ev is gfx_poll of null
+        loop while ev != null:
+            match ev.type:
+                case "keydown":
+                    if ev.key == "q":
+                        running is 0
+                    if ev.key != "q":
+                        task_key of [f, ev.code]
+                case "mousedown":
+                    if (ev.x >= 58) and (ev.x < 362) and (ev.y >= 78) and (ev.y < 266):
+                        f is a
+                    if (ev.x >= 418) and (ev.x < 782) and (ev.y >= 138) and (ev.y < 406):
+                        f is b
+                    if (ev.x >= 118) and (ev.x < 382) and (ev.y >= 394) and (ev.y < 542):
+                        f is c
+            ev is gfx_poll of null
+
+        # health through the observer: sample each window's progress
+        pa is task_read of [a, "progress"]
+        pb is task_read of [b, "progress"]
+        pc is task_read of [c, "progress"]
+        sa is stable of pa
+        sb is stable of pb
+        sc is stable of pc
+
+        # frame: desktop, chrome, then each window draws itself
+        gfx_clear of [8, 9, 14]
+        gfx_text of [12, 8, "EigenOS -- windows are observed bindings (q quits)", 150, 160, 190, 2]
+        chrome of [60, 104, 300, 160, f == a, sa]
+        gfx_text of [68, 86, "counter", 220, 226, 240, 1]
+        chrome of [420, 164, 360, 240, f == b, sb]
+        gfx_text of [428, 146, "bounce", 220, 226, 240, 1]
+        chrome of [120, 420, 260, 120, f == c, sc]
+        gfx_text of [128, 402, "stuck worker", 220, 226, 240, 1]
+        if sc == 1:
+            gfx_text of [216, 402, "(stalled)", 255, 120, 120, 1]
+        task_step of a
+        task_step of b
+        task_step of c
+        gfx_present of null
+        gfx_delay of 25
+    task_kill of a
+    task_kill of b
+    task_kill of c
+    gfx_close of null
+    print of "desktop: closed"

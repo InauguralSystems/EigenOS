@@ -234,6 +234,28 @@ upstream, never worked around.
       the gfx HAL under sustained load (Tidepool's frame-limiter lessons
       apply), and whatever a window manager written in an observer
       language turns out to need.
+      **Phase 1 DONE (2026-07-03) — the windowed-drawing substrate +
+      WM skeleton.** HAL seams: `task_view` (the WM assigns a window
+      task a viewport; the task's gfx calls are translated into it and
+      hard-clipped by the kernel — fb.c clip rect, not politeness — a
+      task with no viewport draws nowhere); gfx builtins + `win_w/
+      win_h/win_key` + vitals registered into every task state at
+      spawn; `task_key` forwards key CODES to a per-task queue
+      (numbers only cross states) and key event dicts carry a `code`
+      field to make that a one-liner; `gfx_poll` in a task returns
+      null (the WM owns input). `demos/desktop.eigs` is the WM in
+      script: chrome + focus-follows-click + key dispatch to focus +
+      per-frame `task_read` of each window's progress into a binding —
+      **the stuck worker's title bar renders red "(stalled)" because
+      `stable of` its progress says so**: the thesis, on screen.
+      Screendump-verified (three windows, bounce animating, focus
+      switch by click); key dispatch proven deterministically at the
+      REPL (2× task_key + 1 step → count 21). Under TCG the desktop
+      runs ~5-7 fps (cross-state evals dominate — the known M9 TCG
+      cost; real silicon is the fix, not tuning). Remaining for MD:
+      drag/resize/z-order (overlap wants damage tracking), the REPL as
+      a window (needs a task_eval seam returning strings by copy), the
+      vitals widget, a launcher, wheel routing to focus.
 
 ## Phase 4 — the durable, replayable machine
 

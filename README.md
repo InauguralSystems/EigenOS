@@ -179,6 +179,11 @@ rejects ELF64, so GRUB does the loading.
   typed observer loop→converged.
 - [ ] **M7** — boot the T3200 (dual-boot via its resident Linux's GRUB;
   VGA + keyboard, no serial)
+- [~] **MD** — the desktop, phase 1 done: windows are observed
+  bindings — `import desktop` runs a window manager written in
+  EigenScript (window = task = `EigsState`, viewport-clipped drawing,
+  click focus, key dispatch across states), and a hung window's title
+  turns red because `stable of` its progress trajectory says so.
 - [x] **M7.5** — the machine has software: the EigenScript stdlib (67
   modules) + demos baked into the image as a ROM bundle, served through
   the upstream source-provider seam (EigenScript PR #362) — `import

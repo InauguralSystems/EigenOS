@@ -64,6 +64,7 @@ int fb_activate(void) {
     if (!g_shadow) return -1;
     g_vram = (volatile uint8_t *)FB_VIRT;
     g_active = 1;
+    fb_gfx_clip_reset();
     fb_present();
     return 0;
 }
@@ -131,6 +132,23 @@ void fb_batch(int on) { g_batch = on; }
 
 /* ---- gfx primitives (shadow only) ---- */
 
+/* Clip rectangle (screen coords, [x0,x1) x [y0,y1)); every primitive
+ * intersects with it. Reset = full screen. */
+static int g_cx0, g_cy0, g_cx1, g_cy1;
+
+void fb_gfx_clip(int x, int y, int w, int h) {
+    g_cx0 = x < 0 ? 0 : x;
+    g_cy0 = y < 0 ? 0 : y;
+    g_cx1 = x + w > (int)g_w ? (int)g_w : x + w;
+    g_cy1 = y + h > (int)g_h ? (int)g_h : y + h;
+    if (g_cx1 < g_cx0) g_cx1 = g_cx0;
+    if (g_cy1 < g_cy0) g_cy1 = g_cy0;
+}
+
+void fb_gfx_clip_reset(void) {
+    g_cx0 = 0; g_cy0 = 0; g_cx1 = (int)g_w; g_cy1 = (int)g_h;
+}
+
 void fb_gfx_clear(int r, int g, int b) {
     if (!g_active) return;
     uint32_t px = fb_pack(r, g, b);
@@ -155,10 +173,10 @@ static void blend_px(uint32_t *p, uint32_t fg, int a) {
 void fb_gfx_fill(int x, int y, int w, int h, int r, int g, int b, int a) {
     if (!g_active || a <= 0) return;
     int x1 = x + w, y1 = y + h;
-    if (x < 0) x = 0;
-    if (y < 0) y = 0;
-    if (x1 > (int)g_w) x1 = (int)g_w;
-    if (y1 > (int)g_h) y1 = (int)g_h;
+    if (x < g_cx0) x = g_cx0;
+    if (y < g_cy0) y = g_cy0;
+    if (x1 > g_cx1) x1 = g_cx1;
+    if (y1 > g_cy1) y1 = g_cy1;
     if (x >= x1 || y >= y1) return;
     uint32_t px = fb_pack(r, g, b);
     if (a >= 255) {
@@ -181,7 +199,7 @@ void fb_gfx_fill(int x, int y, int w, int h, int r, int g, int b, int a) {
 }
 
 void fb_gfx_point(int x, int y, int r, int g, int b) {
-    if (!g_active || x < 0 || y < 0 || x >= (int)g_w || y >= (int)g_h) return;
+    if (!g_active || x < g_cx0 || y < g_cy0 || x >= g_cx1 || y >= g_cy1) return;
     *shadow_px(x, y) = fb_pack(r, g, b);
 }
 

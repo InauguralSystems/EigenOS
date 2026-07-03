@@ -41,7 +41,11 @@ void fb_batch(int on);           /* on: draw_cell skips its VRAM strip
 void fb_present(void);           /* whole shadow -> VRAM */
 
 /* Gfx primitives (shadow only; fb_present shows the frame).
- * Coordinates clip; rgb are 0..255; a=255 is opaque, else src-over. */
+ * Coordinates clip; rgb are 0..255; a=255 is opaque, else src-over.
+ * fb_gfx_clip bounds every primitive to a rectangle — the MD window
+ * viewport seam: a task's drawing cannot escape its window. */
+void fb_gfx_clip(int x, int y, int w, int h);
+void fb_gfx_clip_reset(void);
 void fb_gfx_clear(int r, int g, int b);
 void fb_gfx_fill(int x, int y, int w, int h, int r, int g, int b, int a);
 void fb_gfx_point(int x, int y, int r, int g, int b);

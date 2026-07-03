@@ -177,10 +177,23 @@ static void register_vitals(void) {
  * stalled — deschedule it). Cross-state rule: only NUMBERS cross a
  * switch (copied); Value pointers never do. */
 #define MAX_TASKS 8
-static struct { EigsState *st; int alive; } g_tasks[MAX_TASKS];
+#define TASK_KEYQ 16
+static struct {
+    EigsState *st;
+    int alive;
+    /* MD: the window seam — a viewport this task's gfx calls are
+     * translated+clipped into, and a WM-fed key queue (numbers only
+     * cross states, so keys travel as codes). */
+    int has_view, vx, vy, vw, vh;
+    int keyq[TASK_KEYQ];
+    unsigned kq_head, kq_tail;
+} g_tasks[MAX_TASKS];
 static EigsState *g_primary;   /* the REPL/scheduler state */
+static int g_active_task = -1; /* task whose state is mid-eval; -1 = primary */
 
 extern const char *eigs_bundle_lookup(const char *name);
+
+static void register_task_side(void);   /* gfx + win_* into a task state */
 
 static EigsValue *b_task_spawn(EigsValue *arg) {
     char name[64];
@@ -195,12 +208,18 @@ static EigsValue *b_task_spawn(EigsValue *arg) {
     for (int i = 0; i < MAX_TASKS; i++)
         if (!g_tasks[i].alive) { slot = i; break; }
     if (slot < 0) return eigs_value_new_num(-1);
+    g_tasks[slot].has_view = 0;
+    g_tasks[slot].kq_head = g_tasks[slot].kq_tail = 0;
 
     EigsState *st = eigs_state_new();
     if (!st || !eigs_thread_switch(st)) return eigs_value_new_num(-1);
     eigs_state_init_runtime(st);
+    register_task_side();                      /* draw/win seams (MD) */
+    g_active_task = slot;                      /* no viewport yet: a drawing
+                                                  module top-level clips away */
     EigsValue *r = eigs_eval_string(src);      /* run the task program */
     if (r) eigs_value_release(r);
+    g_active_task = -1;
     int failed = eigs_has_error();
     if (failed) { eigs_clear_error(); eigs_close(st); }
     eigs_thread_switch(g_primary);
@@ -221,10 +240,12 @@ static EigsValue *b_task_step(EigsValue *arg) {
     int id = task_id_of(arg);
     if (id < 0) return eigs_value_new_num(-1);
     eigs_thread_switch(g_tasks[id].st);
+    g_active_task = id;                         /* gfx lands in its viewport */
     EigsValue *r = eigs_eval_string("step of []");
     double out = (r && eigs_value_type(r) == EIGS_TYPE_NUM)
                      ? eigs_value_as_num(r) : 0.0;
     if (r) eigs_value_release(r);               /* released on the TASK state */
+    g_active_task = -1;
     int failed = eigs_has_error();
     if (failed) eigs_clear_error();
     eigs_thread_switch(g_primary);
@@ -320,9 +341,30 @@ static int arg_list_min(EigsValue *a, int n) {
 
 static int g_gfx_open;
 
+/* The drawing context (MD): who is drawing decides where the marks
+ * land. Primary = the whole screen, clip reset. A task mid-step =
+ * translated into and clipped to its viewport — a window's content
+ * cannot escape the window. A task with NO viewport draws nowhere
+ * (zero-area clip). Returns the coordinate offset to apply. */
+static void gfx_ctx(int *ox, int *oy) {
+    *ox = 0; *oy = 0;
+    if (g_active_task < 0) { fb_gfx_clip_reset(); return; }
+    if (g_tasks[g_active_task].has_view) {
+        *ox = g_tasks[g_active_task].vx;
+        *oy = g_tasks[g_active_task].vy;
+        fb_gfx_clip(g_tasks[g_active_task].vx, g_tasks[g_active_task].vy,
+                    g_tasks[g_active_task].vw, g_tasks[g_active_task].vh);
+    } else {
+        fb_gfx_clip(0, 0, 0, 0);
+    }
+}
+
 static EigsValue *b_gfx_open(EigsValue *a) {
     (void)a;                          /* [w,h,title] accepted; mode is fixed */
     if (!fb_active()) return eigs_value_new_num(0);   /* hosted-parity fail */
+    if (g_active_task >= 0)           /* a window is already "open": its
+                                         viewport (1 if the WM gave it one) */
+        return eigs_value_new_num(g_tasks[g_active_task].has_view ? 1 : 0);
     vga_suspend(1);
     kbd_gfx_mode(1);                  /* keys become events, not REPL chars */
     fb_gfx_clear(0, 0, 0);
@@ -333,6 +375,7 @@ static EigsValue *b_gfx_open(EigsValue *a) {
 
 static EigsValue *b_gfx_close(EigsValue *a) {
     (void)a;
+    if (g_active_task >= 0) return eigs_value_new_null();   /* WM's call, not a window's */
     g_gfx_open = 0;
     kbd_gfx_mode(0);
     vga_suspend(0);                   /* repaints the console grid */
@@ -344,14 +387,25 @@ static EigsValue *b_gfx_clear(EigsValue *a) {
     if (arg_list_min(a, 3)) {
         r = (int)list_num(a, 0); g = (int)list_num(a, 1); b = (int)list_num(a, 2);
     }
-    fb_gfx_clear(r, g, b);
+    if (g_active_task >= 0) {         /* a window clears ITS rectangle */
+        int ox, oy;
+        gfx_ctx(&ox, &oy);
+        if (g_tasks[g_active_task].has_view)
+            fb_gfx_fill(ox, oy, g_tasks[g_active_task].vw,
+                        g_tasks[g_active_task].vh, r, g, b, 255);
+    } else {
+        fb_gfx_clip_reset();
+        fb_gfx_clear(r, g, b);
+    }
     return eigs_value_new_null();
 }
 
 static EigsValue *b_gfx_rect(EigsValue *a) {
     if (!arg_list_min(a, 7)) return eigs_value_new_null();
+    int ox, oy;
+    gfx_ctx(&ox, &oy);
     int alpha = eigs_value_list_len(a) >= 8 ? (int)list_num(a, 7) : 255;
-    fb_gfx_fill((int)list_num(a, 0), (int)list_num(a, 1),
+    fb_gfx_fill(ox + (int)list_num(a, 0), oy + (int)list_num(a, 1),
                 (int)list_num(a, 2), (int)list_num(a, 3),
                 (int)list_num(a, 4), (int)list_num(a, 5),
                 (int)list_num(a, 6), alpha);
@@ -360,8 +414,10 @@ static EigsValue *b_gfx_rect(EigsValue *a) {
 
 static EigsValue *b_gfx_line(EigsValue *a) {
     if (!arg_list_min(a, 7)) return eigs_value_new_null();
-    fb_gfx_line((int)list_num(a, 0), (int)list_num(a, 1),
-                (int)list_num(a, 2), (int)list_num(a, 3),
+    int ox, oy;
+    gfx_ctx(&ox, &oy);
+    fb_gfx_line(ox + (int)list_num(a, 0), oy + (int)list_num(a, 1),
+                ox + (int)list_num(a, 2), oy + (int)list_num(a, 3),
                 (int)list_num(a, 4), (int)list_num(a, 5),
                 (int)list_num(a, 6));
     return eigs_value_new_null();
@@ -369,7 +425,9 @@ static EigsValue *b_gfx_line(EigsValue *a) {
 
 static EigsValue *b_gfx_point(EigsValue *a) {
     if (!arg_list_min(a, 5)) return eigs_value_new_null();
-    fb_gfx_point((int)list_num(a, 0), (int)list_num(a, 1),
+    int ox, oy;
+    gfx_ctx(&ox, &oy);
+    fb_gfx_point(ox + (int)list_num(a, 0), oy + (int)list_num(a, 1),
                  (int)list_num(a, 2), (int)list_num(a, 3),
                  (int)list_num(a, 4));
     return eigs_value_new_null();
@@ -377,7 +435,9 @@ static EigsValue *b_gfx_point(EigsValue *a) {
 
 static EigsValue *b_gfx_circle(EigsValue *a) {
     if (!arg_list_min(a, 6)) return eigs_value_new_null();
-    fb_gfx_circle((int)list_num(a, 0), (int)list_num(a, 1),
+    int ox, oy;
+    gfx_ctx(&ox, &oy);
+    fb_gfx_circle(ox + (int)list_num(a, 0), oy + (int)list_num(a, 1),
                   (int)list_num(a, 2), (int)list_num(a, 3),
                   (int)list_num(a, 4), (int)list_num(a, 5));
     return eigs_value_new_null();
@@ -385,10 +445,12 @@ static EigsValue *b_gfx_circle(EigsValue *a) {
 
 static EigsValue *b_gfx_text(EigsValue *a) {
     if (!arg_list_min(a, 6)) return eigs_value_new_null();
+    int ox, oy;
+    gfx_ctx(&ox, &oy);
     char text[256];
     list_str(a, 2, text, sizeof text);
     int scale = eigs_value_list_len(a) >= 7 ? (int)list_num(a, 6) : 1;
-    fb_gfx_text((int)list_num(a, 0), (int)list_num(a, 1), text,
+    fb_gfx_text(ox + (int)list_num(a, 0), oy + (int)list_num(a, 1), text,
                 (int)list_num(a, 3), (int)list_num(a, 4),
                 (int)list_num(a, 5), scale);
     return eigs_value_new_null();
@@ -488,6 +550,8 @@ static const char *key_name(int c, char *one) {
 static EigsValue *b_gfx_poll(EigsValue *a) {
     (void)a;
     if (!g_gfx_open) return eigs_value_new_null();
+    if (g_active_task >= 0) return eigs_value_new_null();  /* the WM owns
+                                       input; windows get task_key codes */
     pump_mouse();
     if (g_evt != g_evh) {
         int type = g_evq[g_evt].type, x = g_evq[g_evt].x,
@@ -520,12 +584,70 @@ static EigsValue *b_gfx_poll(EigsValue *a) {
         EigsValue *d = eigs_value_new_dict(4);
         dset_str(d, "type", down ? "keydown" : "keyup");
         dset_str(d, "key", key_name(code, one));
+        dset_num(d, "code", (double)code);   /* forwardable via task_key */
         dset_num(d, "shift", (mods & KMOD_SHIFT) ? 1 : 0);
         dset_num(d, "ctrl",  (mods & KMOD_CTRL)  ? 1 : 0);
         dset_num(d, "alt",   (mods & KMOD_ALT)   ? 1 : 0);
         return d;
     }
     return eigs_value_new_null();
+}
+
+/* ---- MD window seams ----
+ * task_view [id,x,y,w,h] — the WM assigns a viewport (window content
+ * area); the task's gfx calls land there and nowhere else.
+ * task_key [id, code] — the WM forwards a key to a window; win_key
+ * (task-side) pops it. Numbers only, per the cross-state rule.
+ * win_w/win_h (task-side) — the window's content size. */
+static EigsValue *b_task_view(EigsValue *a) {
+    if (!arg_list_min(a, 5)) return eigs_value_new_num(0);
+    EigsValue *idv = eigs_value_list_get(a, 0);
+    int id = task_id_of(idv);
+    if (idv) eigs_value_release(idv);
+    if (id < 0) return eigs_value_new_num(0);
+    g_tasks[id].vx = (int)list_num(a, 1);
+    g_tasks[id].vy = (int)list_num(a, 2);
+    g_tasks[id].vw = (int)list_num(a, 3);
+    g_tasks[id].vh = (int)list_num(a, 4);
+    g_tasks[id].has_view = (g_tasks[id].vw > 0 && g_tasks[id].vh > 0);
+    return eigs_value_new_num(g_tasks[id].has_view ? 1 : 0);
+}
+
+static EigsValue *b_task_key(EigsValue *a) {
+    if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
+    EigsValue *idv = eigs_value_list_get(a, 0);
+    int id = task_id_of(idv);
+    if (idv) eigs_value_release(idv);
+    if (id < 0) return eigs_value_new_num(0);
+    unsigned next = (g_tasks[id].kq_head + 1) % TASK_KEYQ;
+    if (next == g_tasks[id].kq_tail) return eigs_value_new_num(0);  /* full */
+    g_tasks[id].keyq[g_tasks[id].kq_head] = (int)list_num(a, 1);
+    g_tasks[id].kq_head = next;
+    return eigs_value_new_num(1);
+}
+
+static EigsValue *b_win_key(EigsValue *a) {
+    (void)a;
+    if (g_active_task < 0) return eigs_value_new_num(-1);
+    unsigned t = g_tasks[g_active_task].kq_tail;
+    if (t == g_tasks[g_active_task].kq_head) return eigs_value_new_num(-1);
+    int code = g_tasks[g_active_task].keyq[t];
+    g_tasks[g_active_task].kq_tail = (t + 1) % TASK_KEYQ;
+    return eigs_value_new_num((double)code);
+}
+
+static EigsValue *b_win_w(EigsValue *a) {
+    (void)a;
+    int id = g_active_task;
+    return eigs_value_new_num(id >= 0 && g_tasks[id].has_view
+                                  ? (double)g_tasks[id].vw : 0);
+}
+
+static EigsValue *b_win_h(EigsValue *a) {
+    (void)a;
+    int id = g_active_task;
+    return eigs_value_new_num(id >= 0 && g_tasks[id].has_view
+                                  ? (double)g_tasks[id].vh : 0);
 }
 
 static EigsValue *b_mouse_x(EigsValue *a)  { (void)a; return eigs_value_new_num((double)mouse_x()); }
@@ -551,6 +673,33 @@ static void register_gfx(void) {
     eigs_register_function("mouse_x",       b_mouse_x);
     eigs_register_function("mouse_y",       b_mouse_y);
     eigs_register_function("mouse_buttons", b_mouse_btn);
+    /* MD: the WM's window seams (meaningful from the primary state) */
+    eigs_register_function("task_view", b_task_view);
+    eigs_register_function("task_key",  b_task_key);
+}
+
+/* What a WINDOW task can call: draw (viewport-bound), read its size,
+ * pop WM-forwarded keys, sample machine vitals. Registered into the
+ * task's state at spawn — eigs_register_function binds into whichever
+ * state is attached, which is the fresh task state at that point. */
+static void register_task_side(void) {
+    eigs_register_function("gfx_open",    b_gfx_open);
+    eigs_register_function("gfx_close",   b_gfx_close);
+    eigs_register_function("gfx_clear",   b_gfx_clear);
+    eigs_register_function("gfx_rect",    b_gfx_rect);
+    eigs_register_function("gfx_line",    b_gfx_line);
+    eigs_register_function("gfx_point",   b_gfx_point);
+    eigs_register_function("gfx_circle",  b_gfx_circle);
+    eigs_register_function("gfx_text",    b_gfx_text);
+    eigs_register_function("gfx_present", b_gfx_present);
+    eigs_register_function("gfx_poll",    b_gfx_poll);   /* -> null in a task */
+    eigs_register_function("gfx_ticks",   b_gfx_ticks);
+    eigs_register_function("gfx_delay",   b_gfx_delay);
+    eigs_register_function("gfx_title",   b_gfx_title);
+    eigs_register_function("win_key",     b_win_key);
+    eigs_register_function("win_w",       b_win_w);
+    eigs_register_function("win_h",       b_win_h);
+    register_vitals();
 }
 
 /* M7.5: the ROM bundle. build/bundle.c (generated by tools/mkbundle.py)
