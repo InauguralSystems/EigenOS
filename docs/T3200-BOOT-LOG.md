@@ -183,3 +183,135 @@ down: instrument the diagnosis before acting on it.
 
 Record every outcome here (incl. a failed step 2 — that would refute
 the escaping theory and make the address story live again).
+
+## 2026-07-02 — Full sentinel run: escaping fixed, ring works, DRAM does NOT persist
+
+Two important results from this visit, one procedural, one hardware.
+
+### Escaping ladder: end-to-end verified
+
+Executed the dev-side procedure exactly:
+
+1. Confirmed `/etc/default/grub` was clean (plain `"quiet splash"` — the
+   earlier successful WRITE boot had been the one-time GRUB-editor route,
+   which reverts on the next boot).
+2. Edited `/etc/default/grub` via `sudo nano` to
+   `GRUB_CMDLINE_LINUX_DEFAULT="quiet splash memmap=64K\\\$0x3fff0000 iomem=relaxed"`
+   (three backslashes before `$`).
+3. `sudo update-grub` → `sudo grep memmap /boot/grub/grub.cfg` showed
+   `memmap=64K\$0x3fff0000 iomem=relaxed` — **one** backslash, exactly
+   as the theory predicted. That's the safety gate we're now committing
+   to as the permanent verification step.
+4. Rebooted. Post-boot `cat /proc/cmdline`:
+   `... ro quiet splash memmap=64K$0x3fff0000 iomem=relaxed vt.handoff=7`
+   — literal `$`, full address, made it to the kernel intact for the
+   first permanent (not one-time) configuration on this hardware.
+5. `/proc/iomem` shows the reservation applied:
+   `00100000-3ffeffff : System RAM` / `3fff0000-3fffffff : Reserved` /
+   `40000000-bb6b0fff : System RAM`. Clean 64 KiB carve-out, exactly at
+   the requested address.
+6. `/dev/mem` read at `0x3fff0000` returned data (no EPERM):
+   `ffff ffff fefd f7df ffff f7ff bfff bfff` — floating/uninitialized
+   DRAM. `iomem=relaxed` is confirmed active for System RAM here.
+
+So the crash-log ring **setup mechanism** is fully validated on the
+T3200: reservation, escaping, devmem access, all work. The dev-side
+playbook's step 2 procedure is byte-for-byte correct.
+
+Bonus KASLR datum for the "kernel base collision" and "decompressor
+zone" theories: kernel code was at `0xb3e00000` (~2.9 GiB) in one boot
+and `0x11800000` (~280 MiB) in the next — KASLR is randomizing freely
+across the full range. Neither address is anywhere near `0x1000000`,
+`0x4000000`, or `0x3fff0000`. Both theories can be retired for good;
+the escaping bug was the sole cause of all three black screens.
+
+### Sentinel warm-reset test: FAILED — DRAM does NOT survive warm reset here
+
+Ran the sentinel test as documented:
+
+```
+echo "DRAMTEST-$(date +%s)" | sudo dd of=/dev/mem bs=1 \
+    seek=$((0x3fff0000)) conv=notrunc status=none
+# pre-reboot readback (sanity):
+sudo dd if=/dev/mem bs=1 skip=$((0x3fff0000)) count=32 status=none | cat -v
+# → "DRAMTEST-1783042409\n" + floating DRAM tail — write landed clean.
+sudo reboot
+# after login (cmdline still had memmap+iomem — verified):
+sudo dd if=/dev/mem bs=1 skip=$((0x3fff0000)) count=32 status=none | cat -v
+# → no DRAMTEST string, floating-DRAM pattern only:
+#   M-^?M-^?M-^?M-^?M-~M-}M-wM-_M-^?M-^?M-wM-^?M-?M-^?M-?M-^?...
+```
+
+The post-reboot bytes match the pre-write bytes closely (both are
+"mostly 0xff with sparse bit drops at 0xfe/0xfd/0xf7/0xdf/0xbf/etc.").
+That's a DRAM-decay pattern (individual cells losing charge at different
+rates), NOT a BIOS zero-fill. Interpretation: on this hardware, warm
+reset either lets the memory controller reinitialize DRAM or drops
+refresh for long enough that cells discharge.
+
+**Design implication for M7:** the persistent-RAM crash-log ring at a
+fixed physical address relies on DRAM surviving warm reset. **That
+assumption is invalid on the T3200.** Every setup piece (reservation,
+escaping, devmem) works — the underlying hardware behavior doesn't
+cooperate. The channel is dead for this machine.
+
+Alternatives the dev side should weigh (none decided here):
+
+1. **VGA-text panic screen as the sole post-mortem channel.** The
+   playbook already renders `[mN]` verdicts to VGA; make panic dump
+   go there too. Photograph the screen. Cheap, matches the "no serial"
+   reality on this hardware, and doesn't depend on cooperative DRAM.
+2. Check firmware Setup (F2) for a "Quick Boot" / "No Memory Test" /
+   "Resume from S3" / "Memory Preserve" toggle — some 2008-era BIOSes
+   have a memory-preserve option that only activates in specific paths.
+   Deferred to the F2 firmware pass below.
+3. CMOS/NVRAM (256 bytes) for a panic-reason code only — enough for
+   "which subsystem" but not the full ring. Small change to the ring
+   design (bank-select byte + reason code).
+4. kexec-style soft reset from EigenOS eventually (avoids
+   BIOS/memory-controller reset entirely) — way past M7.
+5. Direct disk write (SATA driver) — driver complexity budget, but
+   most reliable. Also way past M7.
+
+Recommendation: for M7 first boot, accept ephemeral crash log. VGA is
+the only live console anyway (all four ISA UARTs `uart:unknown`),
+so the screen is the post-mortem — matching option 1. Revisit ring
+persistence if the F2 pass finds a memory-preserve toggle.
+
+### Firmware fact worth flagging: BIOS/CSM, not UEFI
+
+`/sys/firmware/efi` does not exist on this system;
+`mokutil --sb-state` responds `EFI variables are not supported on this
+system`. Combined: **Ubuntu is currently booting this machine via CSM /
+legacy BIOS**, not UEFI, even though `/boot/efi` is mounted (ESP exists
+from the install; it just isn't the active boot path).
+
+That contradicts the current CLAUDE.md inventory summary ("firmware is
+UEFI"). The full-machine story is: firmware **supports** UEFI (there IS
+a signed ESP) but currently boots **legacy**. For M7 that's a
+simplification, not a complication:
+
+- The USB-via-CSM primary attempt path in the playbook is *already the
+  active boot mode* on this machine. No firmware toggle needed to try
+  it — just F10 to the boot menu, pick the USB.
+- The "runs blind under GOP" concern for the EFI menuentry path is
+  moot for the first attempt: BIOS boot = real VGA text mode from the
+  start.
+- Suggest updating the CLAUDE.md T3200 section to say "firmware
+  supports UEFI, currently boots via CSM" and adjusting the EFI/GOP
+  caveat accordingly.
+
+Firmware Setup / CSM toggle check still deferred (this session
+consumed all the reboot budget on the sentinel test; F2 pass to be
+done on the next reboot).
+
+### Blocking-item digest for the dev side
+
+- **Escaping procedure works permanently** — commit the triple-backslash
+  form to CLAUDE.md as canonical; the one-time GRUB-editor form is now
+  only the sanity check, not the setup step.
+- **DRAM warm-reset persistence: FALSE on this hardware.** Persistent
+  crash-log ring design needs re-thinking. My recommendation is option
+  (1) above (VGA-only post-mortem), but the design call is yours.
+- **Boot mode is BIOS/CSM**, not UEFI — first-attempt path is
+  unblocked without any firmware setup pass.
