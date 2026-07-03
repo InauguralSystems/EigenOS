@@ -1,0 +1,40 @@
+# MD: the vitals widget — the M8 machine vitals as the desktop's first
+# widget (the roadmap's own words). This window task samples the
+# machine into ordinary bindings each step; the observer accumulates
+# their trajectories, so the widget can display not just the numbers
+# but the machine's own verdict on them: `stable of` heap pressure
+# reads steady, `diverging of` it reads like a leak. The self-observing
+# computer, in a window.
+import vitals
+
+progress is 0.0
+hp is 0.0
+fr is 0.0
+
+define bar(bx, by, bw, frac, r, g, b) as:
+    gfx_rect of [bx, by, bw, 12, 30, 34, 48]
+    local fill is frac * bw
+    if fill > bw:
+        fill is bw
+    if fill < 0:
+        fill is 0
+    gfx_rect of [bx, by, fill, 12, r, g, b]
+    return 0
+
+define step() as:
+    progress is progress + 1
+    hp is vitals.heap_pressure of []
+    fr is vitals.mem_free_ratio of []
+    local up is vitals.uptime_s of []
+    gfx_clear of [18, 20, 30]
+    gfx_text of [10, 8, "machine", 140, 160, 220, 2]
+    gfx_text of [10, 40, "heap pressure", 180, 190, 210, 1]
+    bar of [10, 54, 160, hp, 230, 160, 60]
+    gfx_text of [10, 78, "free memory", 180, 190, 210, 1]
+    bar of [10, 92, 160, fr, 90, 200, 120]
+    gfx_text of [10, 118, "uptime " + (str of up) + " s", 180, 190, 210, 1]
+    if (stable of hp) == 1:
+        gfx_text of [10, 146, "heap: steady", 120, 230, 150, 1]
+    if (diverging of hp) == 1:
+        gfx_text of [10, 146, "heap: growing", 255, 120, 120, 1]
+    return progress

@@ -274,9 +274,19 @@ upstream, never worked around.
       QEMU-proven: `x is 5` → 5, `x * 8` → 40 in the window, and after
       quitting, `x` at the boot console is UNDEFINED — a REPL window
       is an isolated machine state you can look at. ESC now quits the
-      desktop (q is typeable text). Remaining for MD: resize, the
-      vitals widget, a launcher, wheel routing to focus, multi-line
-      (`:`-block) input in REPL windows.
+      desktop (q is typeable text).
+      **The vitals widget (DONE 2026-07-03)** — the M8 monitor as the
+      first widget, zero new kernel surface (task states already had
+      the vitals builtins): `win_vitals.eigs` samples heap_pressure /
+      mem_free_ratio / uptime into its own bindings each step, draws
+      bars, and renders the machine's own verdict — "heap: steady"
+      via `stable of`, "heap: growing" via `diverging of` — the
+      self-observing computer in a window, screendump-proven with all
+      five windows composited. Remaining for MD: resize, a launcher,
+      wheel routing to focus, multi-line (`:`-block) input in REPL
+      windows — and the WM wants its per-window branching refactored
+      list-driven before a sixth window (observer bindings must stay
+      NAMED scalars — the per-value-object trap).
 
 ## Phase 4 — the durable, replayable machine
 

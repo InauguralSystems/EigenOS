@@ -102,6 +102,10 @@ if ok == 1:
     xr is 480
     yr is 486
     task_view of [r, xr, yr, 480, 220]
+    v is task_spawn of "win_vitals"
+    xv is 820
+    yv is 104
+    task_view of [v, xv, yv, 180, 240]
     rline is ""
     rlines is []
     f is a
@@ -112,6 +116,7 @@ if ok == 1:
     pb is 0.0
     pc is 0.0
     pr is 0.0
+    pv is 0.0
     running is 1
     loop while running == 1:
         ev is gfx_poll of null
@@ -150,11 +155,14 @@ if ok == 1:
                         got is press_at of [ev.x, ev.y, c, xc, yc, 260, 120]
                     if f == r:
                         got is press_at of [ev.x, ev.y, r, xr, yr, 480, 220]
+                    if f == v:
+                        got is press_at of [ev.x, ev.y, v, xv, yv, 180, 240]
                     if got == 0:
                         if (press_at of [ev.x, ev.y, a, xa, ya, 300, 160]) == 0:
                             if (press_at of [ev.x, ev.y, b, xb, yb, 360, 240]) == 0:
                                 if (press_at of [ev.x, ev.y, c, xc, yc, 260, 120]) == 0:
-                                    press_at of [ev.x, ev.y, r, xr, yr, 480, 220]
+                                    if (press_at of [ev.x, ev.y, r, xr, yr, 480, 220]) == 0:
+                                        press_at of [ev.x, ev.y, v, xv, yv, 180, 240]
                 case "mousemove":
                     if drag == a:
                         xa is ev.x - gdx
@@ -188,6 +196,14 @@ if ok == 1:
                         if xr < 4:
                             xr is 4
                         task_view of [r, xr, yr, 480, 220]
+                    if drag == v:
+                        xv is ev.x - gdx
+                        yv is ev.y - gdy
+                        if yv < 34:
+                            yv is 34
+                        if xv < 4:
+                            xv is 4
+                        task_view of [v, xv, yv, 180, 240]
                 case "mouseup":
                     drag is 0 - 1
             ev is gfx_poll of null
@@ -197,10 +213,12 @@ if ok == 1:
         pb is task_read of [b, "progress"]
         pc is task_read of [c, "progress"]
         pr is task_read of [r, "progress"]
+        pv is task_read of [v, "progress"]
         sa is stable of pa
         sb is stable of pb
         sc is stable of pc
         sr is stable of pr
+        sv is stable of pv
 
         # frame: desktop, then windows back-to-front (focused on top)
         gfx_clear of [8, 9, 14]
@@ -209,27 +227,38 @@ if ok == 1:
             draw_win of [b, xb, yb, 360, 240, 0, sb, "bounce"]
             draw_win of [c, xc, yc, 260, 120, 0, sc, "stuck worker"]
             draw_repl of [xr, yr, 480, 220, 0, sr]
+            draw_win of [v, xv, yv, 180, 240, 0, sv, "vitals"]
             draw_win of [a, xa, ya, 300, 160, 1, sa, "counter"]
         if f == b:
             draw_win of [a, xa, ya, 300, 160, 0, sa, "counter"]
             draw_win of [c, xc, yc, 260, 120, 0, sc, "stuck worker"]
             draw_repl of [xr, yr, 480, 220, 0, sr]
+            draw_win of [v, xv, yv, 180, 240, 0, sv, "vitals"]
             draw_win of [b, xb, yb, 360, 240, 1, sb, "bounce"]
         if f == c:
             draw_win of [a, xa, ya, 300, 160, 0, sa, "counter"]
             draw_win of [b, xb, yb, 360, 240, 0, sb, "bounce"]
             draw_repl of [xr, yr, 480, 220, 0, sr]
+            draw_win of [v, xv, yv, 180, 240, 0, sv, "vitals"]
             draw_win of [c, xc, yc, 260, 120, 1, sc, "stuck worker"]
         if f == r:
             draw_win of [a, xa, ya, 300, 160, 0, sa, "counter"]
             draw_win of [b, xb, yb, 360, 240, 0, sb, "bounce"]
             draw_win of [c, xc, yc, 260, 120, 0, sc, "stuck worker"]
+            draw_win of [v, xv, yv, 180, 240, 0, sv, "vitals"]
             draw_repl of [xr, yr, 480, 220, 1, sr]
+        if f == v:
+            draw_win of [a, xa, ya, 300, 160, 0, sa, "counter"]
+            draw_win of [b, xb, yb, 360, 240, 0, sb, "bounce"]
+            draw_win of [c, xc, yc, 260, 120, 0, sc, "stuck worker"]
+            draw_repl of [xr, yr, 480, 220, 0, sr]
+            draw_win of [v, xv, yv, 180, 240, 1, sv, "vitals"]
         gfx_present of null
         gfx_delay of 25
     task_kill of a
     task_kill of b
     task_kill of c
     task_kill of r
+    task_kill of v
     gfx_close of null
     print of "desktop: closed"
