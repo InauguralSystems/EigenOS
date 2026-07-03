@@ -302,9 +302,22 @@ upstream, never worked around.
       and the QEMU drive (click-to-focus, drag with live viewport,
       the occluded-title click going to the topmost window, `6 * 7` →
       `42` in the repl window, keys +10 to the counter, stalled title
-      red, clean ESC teardown). Remaining for MD: resize, a launcher,
-      wheel routing to focus, multi-line (`:`-block) input in REPL
-      windows.
+      red, clean ESC teardown).
+      **Resize (DONE 2026-07-03)** — a bottom-right grip on every
+      window (corner dots drawn after `task_step` so the task's own
+      painting can't cover them); a grip press starts a resize instead
+      of a drag, the grabbed corner tracks the pointer through the
+      same `task_view` seam, and 120x60 minimums keep the title and
+      the grip reachable. Zero kernel changes — `task_view` never
+      assumed a fixed size, tasks already adapt through `win_w`/
+      `win_h`, and the kernel clip does the rest (the bounce ball
+      re-clamps into a shrunk window on its next step). Twin-harness
+      assertions cover the grow arithmetic (via a viewport history
+      log), both minimum clamps, and that a grip press never moves
+      the window; QEMU-proven growing bounce to 440x300 over its
+      neighbors, then shrinking it far below minimum onto the 120x60
+      clamp. Remaining for MD: a launcher, wheel routing to focus,
+      multi-line (`:`-block) input in REPL windows.
 
 ## Phase 4 — the durable, replayable machine
 

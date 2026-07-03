@@ -16,10 +16,12 @@
 # observation.
 #
 #   import desktop     click focuses (focused window draws on top) -
-#                      drag a title bar to move a window - keys go to
-#                      the focused window (counter: any key adds 10) -
-#                      the repl window is a real EigenScript REPL on
-#                      its own isolated EigsState - ESC quits
+#                      drag a title bar to move a window - drag the
+#                      bottom-right grip to resize it (tasks adapt via
+#                      win_w/win_h; the kernel clip does the rest) -
+#                      keys go to the focused window (counter: any key
+#                      adds 10) - the repl window is a real EigenScript
+#                      REPL on its own isolated EigsState - ESC quits
 #
 # Windows: win_counter (draws + takes keys), win_bounce (always
 # advancing), task_stuck (the M9 wedged worker — its title turns red
@@ -97,6 +99,12 @@ define in_title(py, rec) as:
         return 1
     return 0
 
+define in_grip(px, py, rec) as:
+    # bottom-right resize grip, content corner + border
+    if (px >= rec.x + rec.w - 14) and (px < rec.x + rec.w + 2) and (py >= rec.y + rec.h - 14) and (py < rec.y + rec.h + 4):
+        return 1
+    return 0
+
 define to_top(idx) as:
     # move wins[idx] to the end (front of the z-order)
     local out is []
@@ -112,17 +120,24 @@ define to_top(idx) as:
 
 define press(px, py) as:
     # front-to-back hit scan: the topmost window under the point gets
-    # focus; a title-bar hit also starts a drag. drag/gdx/gdy are
-    # module bindings — the outward mutation is this helper's job.
+    # focus; a grip hit starts a resize, a title-bar hit a drag.
+    # drag/rsz/gdx/gdy are module bindings — the outward mutation is
+    # this helper's job. For a resize the grab offset is kept from the
+    # bottom-right CORNER, so the corner tracks the pointer.
     local i is (len of wins) - 1
     local rec is null
     loop while i >= 0:
         rec is wins[i]
         if (hit of [px, py, rec]) == 1:
-            if (in_title of [py, rec]) == 1:
-                drag is rec.id
-                gdx is px - rec.x
-                gdy is py - rec.y
+            if (in_grip of [px, py, rec]) == 1:
+                rsz is rec.id
+                gdx is px - (rec.x + rec.w)
+                gdy is py - (rec.y + rec.h)
+            else:
+                if (in_title of [py, rec]) == 1:
+                    drag is rec.id
+                    gdx is px - rec.x
+                    gdy is py - rec.y
             to_top of i
             return 1
         i is i - 1
@@ -150,6 +165,22 @@ define drag_to(px, py) as:
     task_view of [rec.id, rec.x, rec.y, rec.w, rec.h]
     return 0
 
+define resize_to(px, py) as:
+    # the grabbed corner follows the pointer; minimums keep the title
+    # text and the grip itself reachable
+    local i is find_win of rsz
+    if i < 0:
+        return 0
+    local rec is wins[i]
+    rec.w is px - gdx - rec.x
+    rec.h is py - gdy - rec.y
+    if rec.w < 120:
+        rec.w is 120
+    if rec.h < 60:
+        rec.h is 60
+    task_view of [rec.id, rec.x, rec.y, rec.w, rec.h]
+    return 0
+
 define draw_one(rec, focused, stalled) as:
     chrome of [rec.x, rec.y, rec.w, rec.h, focused, stalled]
     gfx_text of [rec.x + 8, rec.y - 18, rec.title, 220, 226, 240, 1]
@@ -167,6 +198,11 @@ define draw_one(rec, focused, stalled) as:
         gfx_clip of null
     local id is rec.id
     task_step of id
+    # resize grip: corner dots drawn AFTER the task so they stay
+    # visible over whatever the window painted
+    gfx_rect of [rec.x + rec.w - 5, rec.y + rec.h - 5, 3, 3, 120, 128, 152]
+    gfx_rect of [rec.x + rec.w - 10, rec.y + rec.h - 5, 3, 3, 120, 128, 152]
+    gfx_rect of [rec.x + rec.w - 5, rec.y + rec.h - 10, 3, 3, 120, 128, 152]
     return 0
 
 ok is gfx_open of [1024, 768, "EigenOS desktop"]
@@ -186,6 +222,7 @@ if ok == 1:
     rline is ""
     rlines is []
     drag is 0 - 1
+    rsz is 0 - 1
     gdx is 0
     gdy is 0
     spawn_win of ["win_counter", 60, 104, 300, 160, "counter", "plain"]
@@ -230,8 +267,11 @@ if ok == 1:
                 case "mousemove":
                     if drag >= 0:
                         drag_to of [ev.x, ev.y]
+                    if rsz >= 0:
+                        resize_to of [ev.x, ev.y]
                 case "mouseup":
                     drag is 0 - 1
+                    rsz is 0 - 1
             ev is gfx_poll of null
 
         # frame: desktop backdrop, then windows back-to-front (focused

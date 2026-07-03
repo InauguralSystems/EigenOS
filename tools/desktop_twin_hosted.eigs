@@ -1,9 +1,10 @@
 # Hosted twin harness for EigenOS demos/desktop.eigs (list-driven WM).
 # Stubs the kernel seams (task_* / gfx_*) in pure EigenScript, feeds the
 # WM a scripted event tape, then asserts the list state: z-order after
-# clicks, drag arithmetic + clamps, key routing to focus, repl transcript
-# via task_eval, teardown, and the observer verdict through the slot
-# dispatch (stuck reads stable, advancing does not).
+# clicks, drag arithmetic + clamps, grip-resize arithmetic + minimum
+# clamps, key routing to focus, repl transcript via task_eval, teardown,
+# and the observer verdict through the slot dispatch (stuck reads
+# stable, advancing does not).
 # Run from the sibling EigenScript repo root (import list needs its lib/):
 #   cd ../EigenScript && ./src/eigenscript ../EigenOS/tools/desktop_twin_hosted.eigs
 # Exits nonzero on any failure — the WM regression gate for MD work.
@@ -16,6 +17,7 @@ stuckmods is {}
 keyslog is []
 evals is []
 views is {}
+viewlog is []
 killed is 0
 fnum is 0
 tape is []
@@ -47,6 +49,7 @@ define task_read(id, name) as:
 define task_view(id, x, y, w, h) as:
     local k is str of id
     views[k] is [x, y, w, h]
+    append of [viewlog, [id, x, y, w, h]]
     return 0
 
 define task_key(id, code) as:
@@ -117,6 +120,15 @@ append of [tape, [22, {"type": "keydown", "key": "7", "code": 55}]]
 append of [tape, [23, {"type": "keydown", "key": "return", "code": 13}]]
 append of [tape, [24, {"type": "mousedown", "x": 900, "y": 200}]]
 append of [tape, [25, {"type": "mousedown", "x": 30, "y": 700}]]
+# resize vitals (focused, at 820,104,180,240): grab the grip with an
+# offset from the corner (-5,-4), drop the corner near (1015,424)
+append of [tape, [30, {"type": "mousedown", "x": 995, "y": 340}]]
+append of [tape, [31, {"type": "mousemove", "x": 1010, "y": 420}]]
+append of [tape, [32, {"type": "mouseup"}]]
+# then shrink it far below the minimums: the clamp must hold
+append of [tape, [34, {"type": "mousedown", "x": 1008, "y": 418}]]
+append of [tape, [35, {"type": "mousemove", "x": 830, "y": 120}]]
+append of [tape, [36, {"type": "mouseup"}]]
 append of [tape, [80, {"type": "keydown", "key": "escape", "code": 27}]]
 
 # ---- run the WM ----
@@ -166,6 +178,23 @@ check of ["rlines count", len of rlines, 2]
 check of ["rlines echo", rlines[0], "eigs> 6 * 7"]
 check of ["rlines result", rlines[1], "42stub"]
 check of ["rline cleared", rline, ""]
+
+# resize: the grow drag put vitals at 195x320 (corner offset -5,-4,
+# pointer at 1010,420) — proven from the viewport history; the shrink
+# drag hit the 120x60 minimum clamp and stayed there; the grip press
+# focused but never dragged (x,y untouched)
+grow_seen is 0
+for ve in viewlog:
+    if (ve[0] == 104) and (ve[3] == 195) and (ve[4] == 320):
+        grow_seen is 1
+check of ["resize grow logged", grow_seen, 1]
+check of ["resize clamp w", wins[4].w, 120]
+check of ["resize clamp h", wins[4].h, 60]
+check of ["resize kept x", wins[4].x, 820]
+check of ["resize kept y", wins[4].y, 104]
+vview is views["104"]
+check of ["resize view w", vview[2], 120]
+check of ["resize view h", vview[3], 60]
 
 # teardown killed every window
 check of ["killed all", killed, 5]
