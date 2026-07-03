@@ -2,7 +2,11 @@
 # viewport (task_view); everything it draws lands inside that rectangle
 # and nowhere else. Keys the WM forwards (task_key) arrive as codes via
 # win_key — any key bumps the count by 10, so focus+dispatch is visible.
+# Scroll the WM forwards (task_wheel) arrives as an accumulated delta
+# via win_wheel — the running wheel sum is displayed, so wheel routing
+# to the focused window is visible and exact.
 count is 0
+turns is 0
 progress is 0.0
 
 define step() as:
@@ -12,8 +16,10 @@ define step() as:
     loop while k >= 0:
         count is count + 10
         k is win_key of []
+    turns is turns + (win_wheel of [])
     gfx_clear of [22, 26, 44]
     gfx_text of [10, 10, "counter", 140, 160, 220, 2]
     gfx_text of [10, 40, str of count, 240, 240, 255, 4]
     gfx_text of [10, 90, "any key here adds 10", 110, 120, 160, 1]
+    gfx_text of [10, 110, "wheel: " + (str of turns), 110, 160, 130, 1]
     return progress

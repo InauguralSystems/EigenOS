@@ -187,6 +187,7 @@ static struct {
     int has_view, vx, vy, vw, vh;
     int keyq[TASK_KEYQ];
     unsigned kq_head, kq_tail;
+    int wheel;                  /* WM-fed scroll accumulator (deltas add) */
 } g_tasks[MAX_TASKS];
 static EigsState *g_primary;   /* the REPL/scheduler state */
 static int g_active_task = -1; /* task whose state is mid-eval; -1 = primary */
@@ -210,6 +211,7 @@ static EigsValue *b_task_spawn(EigsValue *arg) {
     if (slot < 0) return eigs_value_new_num(-1);
     g_tasks[slot].has_view = 0;
     g_tasks[slot].kq_head = g_tasks[slot].kq_tail = 0;
+    g_tasks[slot].wheel = 0;
 
     EigsState *st = eigs_state_new();
     if (!st || !eigs_thread_switch(st)) return eigs_value_new_num(-1);
@@ -312,8 +314,8 @@ static void register_tasks(void) {
  * One display, no windows (until MD): gfx_open suspends the console —
  * the grid still records, serial still logs — and gfx_close repaints
  * it. Subset notes: window size/title are fixed by the boot mode (the
- * [w,h,title] args are accepted, ignored); key events are keydown-only
- * (the translated PS/2 ring has no releases); no wheel. */
+ * [w,h,title] args are accepted, ignored). Since the MD groundwork the
+ * event ring carries keydown+keyup with modifiers AND wheel. */
 static double list_num(EigsValue *l, int i) {
     EigsValue *v = eigs_value_list_get(l, i);
     double d = (v && eigs_value_type(v) == EIGS_TYPE_NUM)
@@ -627,6 +629,9 @@ static EigsValue *b_gfx_poll(EigsValue *a) {
  * area); the task's gfx calls land there and nowhere else.
  * task_key [id, code] — the WM forwards a key to a window; win_key
  * (task-side) pops it. Numbers only, per the cross-state rule.
+ * task_wheel [id, dy] — the WM forwards scroll to a window; deltas
+ * ACCUMULATE (scroll is additive) and win_wheel (task-side) reads and
+ * clears the sum (0 = nothing since the last read).
  * win_w/win_h (task-side) — the window's content size. */
 static EigsValue *b_task_view(EigsValue *a) {
     if (!arg_list_min(a, 5)) return eigs_value_new_num(0);
@@ -653,6 +658,27 @@ static EigsValue *b_task_key(EigsValue *a) {
     g_tasks[id].keyq[g_tasks[id].kq_head] = (int)list_num(a, 1);
     g_tasks[id].kq_head = next;
     return eigs_value_new_num(1);
+}
+
+static EigsValue *b_task_wheel(EigsValue *a) {  /* [id, dy] — accumulate */
+    if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
+    EigsValue *idv = eigs_value_list_get(a, 0);
+    int id = task_id_of(idv);
+    if (idv) eigs_value_release(idv);
+    if (id < 0) return eigs_value_new_num(0);
+    int w = g_tasks[id].wheel + (int)list_num(a, 1);
+    if (w >  32767) w =  32767;   /* a window that never reads can't overflow */
+    if (w < -32767) w = -32767;
+    g_tasks[id].wheel = w;
+    return eigs_value_new_num(1);
+}
+
+static EigsValue *b_win_wheel(EigsValue *a) {   /* read-and-clear the delta */
+    (void)a;
+    if (g_active_task < 0) return eigs_value_new_num(0);
+    int w = g_tasks[g_active_task].wheel;
+    g_tasks[g_active_task].wheel = 0;
+    return eigs_value_new_num((double)w);
 }
 
 static EigsValue *b_win_key(EigsValue *a) {
@@ -756,10 +782,11 @@ static void register_gfx(void) {
     eigs_register_function("mouse_y",       b_mouse_y);
     eigs_register_function("mouse_buttons", b_mouse_btn);
     /* MD: the WM's window seams (meaningful from the primary state) */
-    eigs_register_function("task_view", b_task_view);
-    eigs_register_function("task_key",  b_task_key);
-    eigs_register_function("task_eval", b_task_eval);
-    eigs_register_function("gfx_clip",  b_gfx_clip);
+    eigs_register_function("task_view",  b_task_view);
+    eigs_register_function("task_key",   b_task_key);
+    eigs_register_function("task_wheel", b_task_wheel);
+    eigs_register_function("task_eval",  b_task_eval);
+    eigs_register_function("gfx_clip",   b_gfx_clip);
 }
 
 /* What a WINDOW task can call: draw (viewport-bound), read its size,
@@ -781,6 +808,7 @@ static void register_task_side(void) {
     eigs_register_function("gfx_delay",   b_gfx_delay);
     eigs_register_function("gfx_title",   b_gfx_title);
     eigs_register_function("win_key",     b_win_key);
+    eigs_register_function("win_wheel",   b_win_wheel);
     eigs_register_function("win_w",       b_win_w);
     eigs_register_function("win_h",       b_win_h);
     register_vitals();

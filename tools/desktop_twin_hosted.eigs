@@ -19,6 +19,7 @@ loop while ai < 8:
     alivemap[str of ai] is 0
     ai is ai + 1
 keyslog is []
+wheellog is []
 evals is []
 views is {}
 viewlog is []
@@ -68,6 +69,10 @@ define task_view(id, x, y, w, h) as:
 define task_key(id, code) as:
     append of [keyslog, [id, code]]
     return 0
+
+define task_wheel(id, dy) as:
+    append of [wheellog, [id, dy]]
+    return 1
 
 define task_eval(id, src) as:
     append of [evals, [id, src]]
@@ -122,8 +127,11 @@ append of [tape, [5, {"type": "mousedown", "x": 600, "y": 150}]]
 append of [tape, [6, {"type": "mousemove", "x": 700, "y": 230}]]
 append of [tape, [7, {"type": "mouseup"}]]
 append of [tape, [10, {"type": "keydown", "key": "x", "code": 120}]]
+append of [tape, [11, {"type": "wheel", "x": 0, "y": 0 - 1}]]
 append of [tape, [12, {"type": "mousedown", "x": 200, "y": 180}]]
 append of [tape, [14, {"type": "keydown", "key": "a", "code": 97}]]
+append of [tape, [15, {"type": "wheel", "x": 0, "y": 1}]]
+append of [tape, [15, {"type": "wheel", "x": 0, "y": 1}]]
 append of [tape, [16, {"type": "mousedown", "x": 500, "y": 470}]]
 append of [tape, [17, {"type": "mouseup"}]]
 append of [tape, [18, {"type": "keydown", "key": "6", "code": 54}]]
@@ -194,6 +202,15 @@ check of ["key1 to bounce", keyslog[0][0], 1]
 check of ["key1 code", keyslog[0][1], 120]
 check of ["key2 to counter", keyslog[1][0], 0]
 check of ["key2 code", keyslog[1][1], 97]
+
+# wheel routes to the focused window exactly like keys: one notch down
+# while bounce held focus, two notches up after focus moved to counter
+check of ["wheel count", len of wheellog, 3]
+check of ["wheel1 to bounce", wheellog[0][0], 1]
+check of ["wheel1 dy", wheellog[0][1], 0 - 1]
+check of ["wheel2 to counter", wheellog[1][0], 0]
+check of ["wheel2 dy", wheellog[1][1], 1]
+check of ["wheel3 to counter", wheellog[2][0], 0]
 
 # the repl line assembled + evaled on the repl task; the transcript
 # lives in the window RECORD (each repl window owns its own)

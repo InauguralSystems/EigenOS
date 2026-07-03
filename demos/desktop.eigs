@@ -25,9 +25,12 @@
 #                      win_w/win_h; the kernel clip does the rest) -
 #                      the title-bar x closes a window and frees its
 #                      slot - keys go to the focused window (counter:
-#                      any key adds 10) - every repl window is a real
-#                      EigenScript REPL on its own isolated EigsState,
-#                      each with its own input line - ESC quits
+#                      any key adds 10) and so does the scroll wheel
+#                      (task_wheel accumulates deltas; the counter
+#                      shows its wheel sum) - every repl window is a
+#                      real EigenScript REPL on its own isolated
+#                      EigsState, each with its own input line -
+#                      ESC quits
 #
 # Windows: win_counter (draws + takes keys), win_bounce (always
 # advancing), task_stuck (the M9 wedged worker — its title turns red
@@ -370,6 +373,12 @@ if ok == 1:
                             if ev.key != "escape":
                                 fid is foc.id
                                 task_key of [fid, ev.code]
+                case "wheel":
+                    # scroll routes to the focused window, like keys
+                    if (len of wins) > 0:
+                        foc is wins[(len of wins) - 1]
+                        fid is foc.id
+                        task_wheel of [fid, ev.y]
                 case "mousedown":
                     if ev.y < 28:
                         bar_press of ev.x

@@ -344,8 +344,20 @@ upstream, never worked around.
       slot's verdict recovers within one window) + QEMU (3 launches,
       "0 free" red, refused 4th, x-close, relaunch into the freed
       slot; a freshly launched stuck worker reads red within its
-      first window). Remaining for MD: wheel routing to focus,
-      multi-line (`:`-block) input in REPL windows.
+      first window).
+      **Wheel to focus (DONE 2026-07-03)** — scroll routes to the
+      focused window exactly like keys, through a new cross-state
+      pair: `task_wheel [id, dy]` (WM-side) ACCUMULATES deltas —
+      scroll is additive, so an accumulator, not a queue (clamped
+      ±32767 so a window that never reads can't overflow) — and
+      `win_wheel of []` (task-side) reads-and-clears the sum.
+      win_counter displays its running wheel sum, so routing is
+      visible and exact. Twin harness: wheel events land on whichever
+      window held focus at that moment. QEMU: three notches → the
+      focused counter reads "wheel: 3" (sign matches the SDL y=+1-up
+      convention end to end); focus moved to bounce, two more notches,
+      the counter's sum stays 3. Remaining for MD: multi-line
+      (`:`-block) input in REPL windows.
 
 ## Phase 4 — the durable, replayable machine
 
