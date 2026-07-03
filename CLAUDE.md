@@ -117,25 +117,26 @@ sudo update-grub    # also set GRUB_TIMEOUT_STYLE=menu, GRUB_TIMEOUT=5
 ### One-time Linux setup for the crash log (do BEFORE the first attempt)
 
 EigenOS mirrors every log byte into a persistent-RAM ring at phys
-`0x4000000` (64 KiB, survives warm reset). For Linux to read it back after
+`0x3fff0000` (64 KiB, survives warm reset). For Linux to read it back after
 a hang, add to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`:
 
 ```
-memmap=64K\$0x4000000 iomem=relaxed
+memmap=64K\$0x3fff0000 iomem=relaxed
 ```
 
 The `\$` is REQUIRED (grub eats a bare `$`). Then `sudo update-grub`,
-reboot, and verify `cat /proc/cmdline` shows `memmap=64K$0x4000000`.
+reboot, and verify `cat /proc/cmdline` shows `memmap=64K$0x3fff0000`.
 `memmap` keeps Linux out of the buffer; `iomem=relaxed` unblocks /dev/mem
 (Ubuntu ships STRICT_DEVMEM).
 
-The address is 64 MiB deliberately: the first attempt used 16 MiB
-(`0x1000000`), which is x86-64 Linux's default kernel load base — the
-machine failed to boot with "Physical KASLR disabled: no suitable memory
-region!" (boot-log entry 2026-07-02). If a memmap change ever bricks the
-normal entry again: GRUB recovery entry → root shell →
-`mount -o remount,rw /` → revert `/etc/default/grub` → `update-grub` →
-reboot. That procedure is field-tested.
+The address (1 GiB − 64 KiB) is the survivor of two field failures and
+two dev-side vetoes — see `src/crashlog.h` for the full collision list:
+16 MiB = Linux's kernel load base (no boot), 64 MiB = inside the kernel
+decompressor's zone (black-screen hang), 128 MiB = top of QEMU's default
+RAM, 1 GiB exactly = one byte past EigenOS's boot identity map. Do NOT
+"simplify" it. If a memmap change ever bricks the normal entry again:
+GRUB recovery entry → root shell → `mount -o remount,rw /` → revert
+`/etc/default/grub` → `update-grub` → reboot. Field-tested, twice.
 
 **Then validate the whole channel end-to-end — no EigenOS needed.** The
 one open question is whether this firmware preserves DRAM across a warm
@@ -144,10 +145,10 @@ it, Linux may be using that page):
 
 ```
 echo "DRAMTEST-$(date +%s)" | sudo dd of=/dev/mem bs=1 \
-    seek=$((0x4000000)) conv=notrunc status=none
+    seek=$((0x3fff0000)) conv=notrunc status=none
 sudo reboot        # warm reset — no power cycle
 # after logging back in:
-sudo dd if=/dev/mem bs=1 skip=$((0x4000000)) count=32 status=none | cat -v
+sudo dd if=/dev/mem bs=1 skip=$((0x3fff0000)) count=32 status=none | cat -v
 ```
 
 Sentinel survives → the crash-log channel is proven on this hardware;

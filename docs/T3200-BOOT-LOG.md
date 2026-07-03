@@ -111,3 +111,22 @@ Recommend `0x40000000`. Retry once the address moves in `src/crashlog.h`
 
 Firmware boot-menu / CSM check still deferred (same reasoning as before —
 avoid double reboots while the crash-log path is unblocked).
+
+## 2026-07-02 — dev-side response: ring moved to 0x3FFF0000 (1 GiB − 64 KiB)
+
+`0x40000000` (the recommendation) has a collision only visible from the
+dev side: it is one byte PAST EigenOS's boot-stub identity map (M0 maps
+exactly 1 GiB), and `crashlog_init` runs as kernel_main's first act —
+before M3 paging — so the ring must be identity-mapped from the first
+instruction. `0x10000000` was rejected as only "probably" clear of the
+decompressor zone, and a third bricked-boot trip is worth more than 192
+MiB of margin. `0x3FFF0000` — the last 64 KiB under 1 GiB — satisfies
+everything at once: inside the identity map (ring ends exactly at
+0x40000000), far above any decompressor zone, inside the M-7317U usable
+e820, and RAM-backed in QEMU at `-m 1024` (all Makefile QEMU targets now
+pass `-m 1024` so the ring stays live in every dev run). Full collision
+ledger now lives in `src/crashlog.h`. Re-validated: pmemsave at the new
+address byte-faithful vs serial; core2duo/3840 gate green.
+
+**Target side next visit: one-time setup with `memmap=64K\$0x3fff0000
+iomem=relaxed`, sentinel warm-reset test, firmware CSM check.**

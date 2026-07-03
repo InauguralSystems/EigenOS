@@ -10,6 +10,10 @@ CFLAGS  := -ffreestanding -nostdlib -m64 -mno-red-zone -mno-mmx -mno-sse \
 LDFLAGS := -ffreestanding -nostdlib -no-pie -Wl,-T,linker.ld -Wl,-z,noexecstack \
            -Wl,--build-id=none
 QEMU    := qemu-system-x86_64
+# All QEMU runs get >= 1 GiB so the crash-log ring at 0x3FFF0000
+# (crashlog.h) is RAM-backed; the default -m 128M would leave it
+# outside RAM and silently dead in every dev run.
+QFLAGS  := -m 1024
 
 # --- EigenScript runtime, built freestanding into the kernel image (M5) ---
 # The sibling checkout; the runtime is compiled WITH SSE (it is all doubles)
@@ -122,24 +126,24 @@ usb: $(ISO)
 	sudo dd if=$(ISO) of=$(USB) bs=4M conv=fsync status=progress
 
 run: $(ISO)
-	$(QEMU) -cdrom $(ISO)
+	$(QEMU) $(QFLAGS) -cdrom $(ISO)
 
 # Headless boot for no-display dev: VGA still works (QEMU renders it offscreen);
 # use `make dump` to read VGA text memory out of the live guest.
 run-headless: $(ISO)
-	$(QEMU) -cdrom $(ISO) -display none -no-reboot
+	$(QEMU) $(QFLAGS) -cdrom $(ISO) -display none -no-reboot
 
 # Stream the kernel's COM1 serial log to the terminal (the M1 headless
 # observation path — no VGA-memory dump needed). Ctrl-A X to quit QEMU.
 serial: $(ISO)
-	$(QEMU) -cdrom $(ISO) -serial stdio -display none -no-reboot
+	$(QEMU) $(QFLAGS) -cdrom $(ISO) -serial stdio -display none -no-reboot
 
 # Boot headless, wait for the kernel, dump the first 6 VGA text rows out of
 # the live guest via the QEMU monitor, then quit. The 0x-prefixed bytes are
 # (char, attr) pairs — chars are every other byte.
 dump: $(ISO)
 	{ sleep 6; echo "xp /960bx 0xb8000"; sleep 1; echo quit; } | \
-		$(QEMU) -cdrom $(ISO) -display none -monitor stdio | grep -a ': 0x'
+		$(QEMU) $(QFLAGS) -cdrom $(ISO) -display none -monitor stdio | grep -a ': 0x'
 
 clean:
 	rm -rf build
