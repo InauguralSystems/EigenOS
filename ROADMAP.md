@@ -282,11 +282,29 @@ upstream, never worked around.
       bars, and renders the machine's own verdict — "heap: steady"
       via `stable of`, "heap: growing" via `diverging of` — the
       self-observing computer in a window, screendump-proven with all
-      five windows composited. Remaining for MD: resize, a launcher,
+      five windows composited.
+      **The list-driven WM (DONE 2026-07-03)** — the per-window
+      branching is gone before it met a sixth window: each window is a
+      record (`{id,x,y,w,h,title,kind,slot}`) in a `wins` list ordered
+      back-to-front (focused = last), and focus, hit-test, drag, key
+      routing, draw, and teardown all iterate it — adding a window is
+      one `spawn_win` call. Hit-testing scans front-to-back, which
+      also fixed a latent hit-vs-z mismatch in the branched code (the
+      old fallback probed windows in fixed spawn order, so an occluded
+      window could steal a click). The one thing the language keeps
+      NAMED: observer slots — a trajectory accumulates on a binding,
+      and a list element has no binding identity, so progress samples
+      land in fixed scalars `p0..p7` behind a slot dispatch;
+      `spawn_win` throws on a 9th window rather than silently dropping
+      observation. Proven twice: a hosted twin harness (stubs the
+      task/gfx seams in pure EigenScript, scripts an event tape, 26
+      assertions on z-order/drag/keys/repl/teardown/observer verdicts)
+      and the QEMU drive (click-to-focus, drag with live viewport,
+      the occluded-title click going to the topmost window, `6 * 7` →
+      `42` in the repl window, keys +10 to the counter, stalled title
+      red, clean ESC teardown). Remaining for MD: resize, a launcher,
       wheel routing to focus, multi-line (`:`-block) input in REPL
-      windows — and the WM wants its per-window branching refactored
-      list-driven before a sixth window (observer bindings must stay
-      NAMED scalars — the per-value-object trap).
+      windows.
 
 ## Phase 4 — the durable, replayable machine
 

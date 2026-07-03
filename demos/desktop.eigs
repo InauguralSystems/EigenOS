@@ -1,13 +1,19 @@
-# MD phase 1: the desktop skeleton — windows ARE observed bindings.
+# MD: the list-driven WM — windows ARE observed bindings, now as data.
 #
 # window = task = EigsState (M9); pixels = M9.5 viewports. The WM is
-# script: it draws chrome, steps each window task (a task draws only
-# inside its own viewport — the clip is the kernel's, not politeness),
-# forwards keys to the focused window as codes (numbers only cross
-# states), and reads each window's health through the observer: it
-# samples progress into a binding every frame, and a hung window's
-# trajectory IS `stable` — the "task manager" every desktop bolts on
-# afterward falls out of the language for free.
+# script: each window is a RECORD in `wins` (back-to-front z-order,
+# focused = last), and every WM operation — hit-test, focus, drag, key
+# routing, drawing, teardown — iterates the list. Adding a window is
+# one spawn_win call; nothing else grows. Hit-testing scans front-to-
+# back, so the topmost window under the pointer wins by construction.
+#
+# The one thing that stays NAMED: observer slots. A trajectory
+# accumulates on a BINDING (`stable of p0` reads the history of
+# assignments to p0); a list element has no binding identity, so each
+# window's progress samples land in the fixed scalars p0..p7,
+# dispatched by the record's slot index. 8 slots = the window budget;
+# spawn_win refuses a 9th loudly rather than silently dropping the
+# observation.
 #
 #   import desktop     click focuses (focused window draws on top) -
 #                      drag a title bar to move a window - keys go to
@@ -19,7 +25,8 @@
 # advancing), task_stuck (the M9 wedged worker — its title turns red
 # because its progress reads stable), win_repl (type into it: the WM
 # edits the line, task_eval runs it on the window's own state and the
-# result comes back as a by-value string).
+# result comes back as a by-value string), win_vitals (the machine
+# watching itself).
 
 import list
 
@@ -36,87 +43,157 @@ define chrome(cx, cy, cw, ch, focused, stalled) as:
     gfx_rect of [cx, cy, cw, ch, 14, 16, 26]
     return 0
 
-define draw_win(id, wx, wy, ww, wh, focused, stalled, title) as:
-    chrome of [wx, wy, ww, wh, focused, stalled]
-    gfx_text of [wx + 8, wy - 18, title, 220, 226, 240, 1]
-    if stalled == 1:
-        gfx_text of [wx + ww - 66, wy - 18, "(stalled)", 255, 150, 150, 1]
-    task_step of id
+define spawn_win(mod, wx, wy, ww, wh, title, kind) as:
+    # one call = one window: spawn the task state, give it a viewport,
+    # claim an observer slot, append the record. wins/nslots are
+    # module bindings — `is` updates them outward.
+    if nslots >= 8:
+        throw of "desktop: out of observer slots (8 windows max)"
+    local id is task_spawn of mod
+    task_view of [id, wx, wy, ww, wh]
+    append of [wins, {"id": id, "x": wx, "y": wy, "w": ww, "h": wh, "title": title, "kind": kind, "slot": nslots}]
+    nslots is nslots + 1
     return 0
 
-define draw_repl(wx, wy, ww, wh, focused, stalled) as:
-    # the WM renders the transcript on the repl window's behalf,
-    # clipped to the window rect (hosted-parity gfx_clip)
-    chrome of [wx, wy, ww, wh, focused, stalled]
-    gfx_text of [wx + 8, wy - 18, "repl -- its own EigsState", 220, 226, 240, 1]
-    gfx_clip of [wx, wy, ww, wh]
-    local i is 0
-    for tl in rlines:
-        gfx_text of [wx + 6, wy + 6 + i * 16, tl, 185, 205, 185, 1]
-        i is i + 1
-    gfx_text of [wx + 6, wy + 6 + i * 16, "eigs> " + rline + "_", 240, 240, 255, 1]
-    gfx_clip of null
-    task_step of r
+define sample_health(slot, id) as:
+    # the slot dispatch — the one branch chain the language requires:
+    # only a named scalar has a trajectory. + 0.0 forces a fresh value
+    # so no alias ever splits it.
+    local v is task_read of [id, "progress"]
+    if slot == 0:
+        p0 is v + 0.0
+        return stable of p0
+    if slot == 1:
+        p1 is v + 0.0
+        return stable of p1
+    if slot == 2:
+        p2 is v + 0.0
+        return stable of p2
+    if slot == 3:
+        p3 is v + 0.0
+        return stable of p3
+    if slot == 4:
+        p4 is v + 0.0
+        return stable of p4
+    if slot == 5:
+        p5 is v + 0.0
+        return stable of p5
+    if slot == 6:
+        p6 is v + 0.0
+        return stable of p6
+    if slot == 7:
+        p7 is v + 0.0
+        return stable of p7
     return 0
 
-define hit(px, py, wx, wy, ww, wh) as:
+define hit(px, py, rec) as:
     # window rect including chrome (title bar + border)
-    if (px >= wx - 2) and (px < wx + ww + 2) and (py >= wy - 26) and (py < wy + wh + 4):
+    if (px >= rec.x - 2) and (px < rec.x + rec.w + 2) and (py >= rec.y - 26) and (py < rec.y + rec.h + 4):
         return 1
     return 0
 
-define in_title(py, wy) as:
-    if (py >= wy - 26) and (py < wy):
+define in_title(py, rec) as:
+    if (py >= rec.y - 26) and (py < rec.y):
         return 1
     return 0
 
-define press_at(px, py, id, wx, wy, ww, wh) as:
-    # focus on any hit; start a drag if the hit is in the title bar.
-    # f/drag/gdx/gdy are module bindings — `is` updates them outward.
-    if (hit of [px, py, wx, wy, ww, wh]) == 1:
-        f is id
-        if (in_title of [py, wy]) == 1:
-            drag is id
-            gdx is px - wx
-            gdy is py - wy
-        return 1
+define to_top(idx) as:
+    # move wins[idx] to the end (front of the z-order)
+    local out is []
+    local n is len of wins
+    local i is 0
+    loop while i < n:
+        if i != idx:
+            append of [out, wins[i]]
+        i is i + 1
+    append of [out, wins[idx]]
+    wins is out
+    return 0
+
+define press(px, py) as:
+    # front-to-back hit scan: the topmost window under the point gets
+    # focus; a title-bar hit also starts a drag. drag/gdx/gdy are
+    # module bindings — the outward mutation is this helper's job.
+    local i is (len of wins) - 1
+    local rec is null
+    loop while i >= 0:
+        rec is wins[i]
+        if (hit of [px, py, rec]) == 1:
+            if (in_title of [py, rec]) == 1:
+                drag is rec.id
+                gdx is px - rec.x
+                gdy is py - rec.y
+            to_top of i
+            return 1
+        i is i - 1
+    return 0
+
+define find_win(id) as:
+    local i is 0
+    loop while i < (len of wins):
+        if wins[i].id == id:
+            return i
+        i is i + 1
+    return 0 - 1
+
+define drag_to(px, py) as:
+    local i is find_win of drag
+    if i < 0:
+        return 0
+    local rec is wins[i]
+    rec.x is px - gdx
+    rec.y is py - gdy
+    if rec.y < 34:
+        rec.y is 34
+    if rec.x < 4:
+        rec.x is 4
+    task_view of [rec.id, rec.x, rec.y, rec.w, rec.h]
+    return 0
+
+define draw_one(rec, focused, stalled) as:
+    chrome of [rec.x, rec.y, rec.w, rec.h, focused, stalled]
+    gfx_text of [rec.x + 8, rec.y - 18, rec.title, 220, 226, 240, 1]
+    if stalled == 1:
+        gfx_text of [rec.x + rec.w - 66, rec.y - 18, "(stalled)", 255, 150, 150, 1]
+    if rec.kind == "repl":
+        # the WM renders the transcript on the repl window's behalf,
+        # clipped to the window rect (hosted-parity gfx_clip)
+        gfx_clip of [rec.x, rec.y, rec.w, rec.h]
+        local i is 0
+        for tl in rlines:
+            gfx_text of [rec.x + 6, rec.y + 6 + i * 16, tl, 185, 205, 185, 1]
+            i is i + 1
+        gfx_text of [rec.x + 6, rec.y + 6 + i * 16, "eigs> " + rline + "_", 240, 240, 255, 1]
+        gfx_clip of null
+    local id is rec.id
+    task_step of id
     return 0
 
 ok is gfx_open of [1024, 768, "EigenOS desktop"]
 if ok == 0:
     print of "desktop: no framebuffer (text console boot)"
 if ok == 1:
-    a is task_spawn of "win_counter"
-    xa is 60
-    ya is 104
-    task_view of [a, xa, ya, 300, 160]
-    b is task_spawn of "win_bounce"
-    xb is 420
-    yb is 164
-    task_view of [b, xb, yb, 360, 240]
-    c is task_spawn of "task_stuck"
-    xc is 120
-    yc is 420
-    task_view of [c, xc, yc, 260, 120]
-    r is task_spawn of "win_repl"
-    xr is 480
-    yr is 486
-    task_view of [r, xr, yr, 480, 220]
-    v is task_spawn of "win_vitals"
-    xv is 820
-    yv is 104
-    task_view of [v, xv, yv, 180, 240]
+    wins is []
+    nslots is 0
+    p0 is 0.0
+    p1 is 0.0
+    p2 is 0.0
+    p3 is 0.0
+    p4 is 0.0
+    p5 is 0.0
+    p6 is 0.0
+    p7 is 0.0
     rline is ""
     rlines is []
-    f is a
     drag is 0 - 1
     gdx is 0
     gdy is 0
-    pa is 0.0
-    pb is 0.0
-    pc is 0.0
-    pr is 0.0
-    pv is 0.0
+    spawn_win of ["win_counter", 60, 104, 300, 160, "counter", "plain"]
+    spawn_win of ["win_bounce", 420, 164, 360, 240, "bounce", "plain"]
+    spawn_win of ["task_stuck", 120, 420, 260, 120, "stuck worker", "plain"]
+    spawn_win of ["win_repl", 480, 486, 480, 220, "repl -- its own EigsState", "repl"]
+    spawn_win of ["win_vitals", 820, 104, 180, 240, "vitals", "plain"]
+    to_top of 0
     running is 1
     loop while running == 1:
         ev is gfx_poll of null
@@ -125,140 +202,61 @@ if ok == 1:
                 case "keydown":
                     if ev.key == "escape":
                         running is 0
-                    if f == r:
+                    foc is wins[(len of wins) - 1]
+                    if foc.kind == "repl":
                         if (ev.code >= 32) and (ev.code < 127):
                             if (len of rline) < 52:
                                 rline is rline + (chr of ev.code)
                         if ev.key == "backspace":
-                            n is len of rline
-                            if n > 0:
-                                rline is substr of [rline, 0, n - 1]
+                            rn is len of rline
+                            if rn > 0:
+                                rline is substr of [rline, 0, rn - 1]
                         if ev.key == "return":
                             if (len of rline) > 0:
                                 append of [rlines, "eigs> " + rline]
-                                res is task_eval of [r, rline]
+                                fid is foc.id
+                                res is task_eval of [fid, rline]
                                 if (len of res) > 0:
                                     append of [rlines, res]
                                 loop while (len of rlines) > 11:
                                     rlines is list.drop of [rlines, 1]
                                 rline is ""
-                    if f != r:
+                    if foc.kind != "repl":
                         if ev.key != "escape":
-                            task_key of [f, ev.code]
+                            fid is foc.id
+                            task_key of [fid, ev.code]
                 case "mousedown":
-                    got is 0
-                    if f == a:
-                        got is press_at of [ev.x, ev.y, a, xa, ya, 300, 160]
-                    if f == b:
-                        got is press_at of [ev.x, ev.y, b, xb, yb, 360, 240]
-                    if f == c:
-                        got is press_at of [ev.x, ev.y, c, xc, yc, 260, 120]
-                    if f == r:
-                        got is press_at of [ev.x, ev.y, r, xr, yr, 480, 220]
-                    if f == v:
-                        got is press_at of [ev.x, ev.y, v, xv, yv, 180, 240]
-                    if got == 0:
-                        if (press_at of [ev.x, ev.y, a, xa, ya, 300, 160]) == 0:
-                            if (press_at of [ev.x, ev.y, b, xb, yb, 360, 240]) == 0:
-                                if (press_at of [ev.x, ev.y, c, xc, yc, 260, 120]) == 0:
-                                    if (press_at of [ev.x, ev.y, r, xr, yr, 480, 220]) == 0:
-                                        press_at of [ev.x, ev.y, v, xv, yv, 180, 240]
+                    press of [ev.x, ev.y]
                 case "mousemove":
-                    if drag == a:
-                        xa is ev.x - gdx
-                        ya is ev.y - gdy
-                        if ya < 34:
-                            ya is 34
-                        if xa < 4:
-                            xa is 4
-                        task_view of [a, xa, ya, 300, 160]
-                    if drag == b:
-                        xb is ev.x - gdx
-                        yb is ev.y - gdy
-                        if yb < 34:
-                            yb is 34
-                        if xb < 4:
-                            xb is 4
-                        task_view of [b, xb, yb, 360, 240]
-                    if drag == c:
-                        xc is ev.x - gdx
-                        yc is ev.y - gdy
-                        if yc < 34:
-                            yc is 34
-                        if xc < 4:
-                            xc is 4
-                        task_view of [c, xc, yc, 260, 120]
-                    if drag == r:
-                        xr is ev.x - gdx
-                        yr is ev.y - gdy
-                        if yr < 34:
-                            yr is 34
-                        if xr < 4:
-                            xr is 4
-                        task_view of [r, xr, yr, 480, 220]
-                    if drag == v:
-                        xv is ev.x - gdx
-                        yv is ev.y - gdy
-                        if yv < 34:
-                            yv is 34
-                        if xv < 4:
-                            xv is 4
-                        task_view of [v, xv, yv, 180, 240]
+                    if drag >= 0:
+                        drag_to of [ev.x, ev.y]
                 case "mouseup":
                     drag is 0 - 1
             ev is gfx_poll of null
 
-        # health through the observer: sample each window's progress
-        pa is task_read of [a, "progress"]
-        pb is task_read of [b, "progress"]
-        pc is task_read of [c, "progress"]
-        pr is task_read of [r, "progress"]
-        pv is task_read of [v, "progress"]
-        sa is stable of pa
-        sb is stable of pb
-        sc is stable of pc
-        sr is stable of pr
-        sv is stable of pv
-
-        # frame: desktop, then windows back-to-front (focused on top)
+        # frame: desktop backdrop, then windows back-to-front (focused
+        # last = on top); each window's health is sampled through its
+        # observer slot on the way — a hung window's title reads red
+        # because its progress trajectory IS `stable`.
         gfx_clear of [8, 9, 14]
         gfx_text of [12, 8, "EigenOS -- windows are observed bindings (esc quits)", 150, 160, 190, 2]
-        if f == a:
-            draw_win of [b, xb, yb, 360, 240, 0, sb, "bounce"]
-            draw_win of [c, xc, yc, 260, 120, 0, sc, "stuck worker"]
-            draw_repl of [xr, yr, 480, 220, 0, sr]
-            draw_win of [v, xv, yv, 180, 240, 0, sv, "vitals"]
-            draw_win of [a, xa, ya, 300, 160, 1, sa, "counter"]
-        if f == b:
-            draw_win of [a, xa, ya, 300, 160, 0, sa, "counter"]
-            draw_win of [c, xc, yc, 260, 120, 0, sc, "stuck worker"]
-            draw_repl of [xr, yr, 480, 220, 0, sr]
-            draw_win of [v, xv, yv, 180, 240, 0, sv, "vitals"]
-            draw_win of [b, xb, yb, 360, 240, 1, sb, "bounce"]
-        if f == c:
-            draw_win of [a, xa, ya, 300, 160, 0, sa, "counter"]
-            draw_win of [b, xb, yb, 360, 240, 0, sb, "bounce"]
-            draw_repl of [xr, yr, 480, 220, 0, sr]
-            draw_win of [v, xv, yv, 180, 240, 0, sv, "vitals"]
-            draw_win of [c, xc, yc, 260, 120, 1, sc, "stuck worker"]
-        if f == r:
-            draw_win of [a, xa, ya, 300, 160, 0, sa, "counter"]
-            draw_win of [b, xb, yb, 360, 240, 0, sb, "bounce"]
-            draw_win of [c, xc, yc, 260, 120, 0, sc, "stuck worker"]
-            draw_win of [v, xv, yv, 180, 240, 0, sv, "vitals"]
-            draw_repl of [xr, yr, 480, 220, 1, sr]
-        if f == v:
-            draw_win of [a, xa, ya, 300, 160, 0, sa, "counter"]
-            draw_win of [b, xb, yb, 360, 240, 0, sb, "bounce"]
-            draw_win of [c, xc, yc, 260, 120, 0, sc, "stuck worker"]
-            draw_repl of [xr, yr, 480, 220, 0, sr]
-            draw_win of [v, xv, yv, 180, 240, 1, sv, "vitals"]
+        wn is len of wins
+        wi is 0
+        loop while wi < wn:
+            wrec is wins[wi]
+            st is sample_health of [wrec.slot, wrec.id]
+            focused is 0
+            if wi == wn - 1:
+                focused is 1
+            draw_one of [wrec, focused, st]
+            wi is wi + 1
         gfx_present of null
         gfx_delay of 25
-    task_kill of a
-    task_kill of b
-    task_kill of c
-    task_kill of r
-    task_kill of v
+    wi is 0
+    loop while wi < (len of wins):
+        wrec is wins[wi]
+        kid is wrec.id
+        task_kill of kid
+        wi is wi + 1
     gfx_close of null
     print of "desktop: closed"
