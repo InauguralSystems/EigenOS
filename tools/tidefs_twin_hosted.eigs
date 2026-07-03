@@ -1,0 +1,225 @@
+# Hosted twin for tidefs (M10): tidelog's store.eigs + cbor.eigs,
+# BYTE-UNMODIFIED, mounted on regionfs over a simulated block device —
+# the #248-250 durability primitives re-proven with no OS underneath.
+#
+# Load order mirrors the bundle concatenation (and tidelog.eigs's own
+# load_file composition): regionfs provides write_bytes/read_bytes_buf/
+# rename/file_exists in the scope the store resolves them from.
+#
+# Proofs: store ops + recovery-equivalence reopen, temporal reads over
+# the on-regionfs log, compaction (the rename path), and tidelog's own
+# crash model re-run on this substrate — an EVERY-BYTE-OFFSET
+# truncation sweep of the log, asserting recovery lands exactly on the
+# committed-record-prefix state at each offset.
+#
+# Run from the sibling EigenScript repo root:
+#   ./src/eigenscript ../EigenOS/tools/tidefs_twin_hosted.eigs
+
+# ---- simulated disk (same stubs as the regionfs twin) ---------------
+disk is {}
+SIM_SECTORS is 512
+
+define bcopy(src) as:
+    local out is buffer of 512
+    local i is 0
+    loop while i < 512:
+        buf_set of [out, i, buf_get of [src, i]]
+        i is i + 1
+    return out
+
+define blk_present() as:
+    return 1
+
+define blk_sectors() as:
+    return SIM_SECTORS
+
+define blk_unlock() as:
+    return 1
+
+define blk_flush() as:
+    return 1
+
+define blk_read(lba) as:
+    local k is str of lba
+    if (has_key of [disk, k]) == 1:
+        return bcopy of disk[k]
+    return buffer of 512
+
+define blk_write(lba, data) as:
+    if (buf_len of data) != 512:
+        return 0
+    disk[str of lba] is bcopy of data
+    return 1
+
+# ---- the stack under test (byte-unmodified tidelog on regionfs) -----
+load_file of "../EigenOS/demos/regionfs.eigs"
+load_file of "../tidelog/src/cbor.eigs"
+load_file of "../tidelog/src/store.eigs"
+
+# ---- checks ----------------------------------------------------------
+fails is 0
+
+define check(label, got, want) as:
+    if got == want:
+        print of ("PASS " + label)
+    if got != want:
+        fails is fails + 1
+        print of ("FAIL " + label + ": got " + (str of got) + " want " + (str of want))
+    return 0
+
+define eq_val(a, b) as:
+    local ta is type of a
+    if ta != (type of b):
+        return 0
+    if ta == "list":
+        if (len of a) != (len of b):
+            return 0
+        local i is 0
+        loop while i < (len of a):
+            if (eq_val of [a[i], b[i]]) == 0:
+                return 0
+            i is i + 1
+        return 1
+    if ta == "dict":
+        local ka is keys of a
+        if (len of ka) != (len of (keys of b)):
+            return 0
+        for k in ka:
+            if (has_key of [b, k]) == 0:
+                return 0
+            if (eq_val of [a[k], b[k]]) == 0:
+                return 0
+        return 1
+    if a == b:
+        return 1
+    return 0
+
+define eq_keydir(kd, exp) as:
+    local ke is keys of exp
+    if (len of (keys of kd)) != (len of ke):
+        return 0
+    for k in ke:
+        if (has_key of [kd, k]) == 0:
+            return 0
+        if (eq_val of [kd[k], exp[k]]) == 0:
+            return 0
+    return 1
+
+# ---- format the region layer, open a fresh store --------------------
+check of ["format", format of [64, 4], 1]
+s is store_open of "kv.log"
+check of ["fresh store version", s.version, 0]
+
+# the op sequence; expected keydir snapshot per version, by replaying
+# the same records into plain dicts
+recs is []
+append of [recs, [1, "alpha", 42]]
+append of [recs, [1, "beta", "hello"]]
+append of [recs, [1, "gamma", [1, 2.5, "x"]]]
+append of [recs, [1, "alpha", {"n": 7}]]
+append of [recs, [2, "beta"]]
+append of [recs, [1, "delta", 3.25]]
+
+expstates is []
+append of [expstates, {}]
+cur is {}
+for r in recs:
+    nxt is {}
+    for k in keys of cur:
+        nxt[k] is cur[k]
+    if r[0] == 1:
+        nxt[r[1]] is r[2]
+    if r[0] == 2:
+        if (has_key of [nxt, r[1]]) == 1:
+            dict_remove of [nxt, r[1]]
+    append of [expstates, nxt]
+    cur is nxt
+
+# apply through the real API
+store_put of [s, "alpha", 42]
+store_put of [s, "beta", "hello"]
+store_put of [s, "gamma", [1, 2.5, "x"]]
+store_put of [s, "alpha", {"n": 7}]
+store_delete of [s, "beta"]
+store_put of [s, "delta", 3.25]
+check of ["version after ops", s.version, 6]
+check of ["live keydir", eq_keydir of [s.keydir, expstates[6]], 1]
+check of ["get missing is null", (store_get of [s, "beta"]) == null, 1]
+
+# ---- recovery equivalence: reopen replays the on-regionfs log -------
+s2 is store_open of "kv.log"
+check of ["reopen version", s2.version, 6]
+check of ["reopen keydir", eq_keydir of [s2.keydir, expstates[6]], 1]
+check of ["reopen size", store_size of s2, 3]
+
+# ---- temporal reads over the on-regionfs history --------------------
+s3 is store_open_at of ["kv.log", 3]
+check of ["at v3 version", s3.version, 3]
+check of ["at v3 keydir", eq_keydir of [s3.keydir, expstates[3]], 1]
+check of ["get_at pre-overwrite", store_get_at of ["kv.log", "alpha", 3], 42]
+check of ["get_at pre-delete", store_get_at of ["kv.log", "beta", 4], "hello"]
+
+# ---- the crash sweep: tidelog's own model on this substrate ---------
+# record boundaries from the frames themselves
+bounds is [0]
+btot is 0
+for r in recs:
+    btot is btot + (len of (store_frame of r))
+    append of [bounds, btot]
+logbuf is read_bytes_buf of "kv.log"
+loglen is buf_len of logbuf
+check of ["log length = frames", loglen, btot]
+logl is buf_to_list of logbuf
+
+sweep_bad is 0
+o is 0
+loop while o <= loglen:
+    prefix is []
+    i is 0
+    loop while i < o:
+        append of [prefix, logl[i]]
+        i is i + 1
+    write_bytes of ["sweep.log", prefix, 0]
+    sv is store_open of "sweep.log"
+    expv is 0
+    vi is 0
+    loop while vi < (len of bounds):
+        if bounds[vi] <= o:
+            expv is vi
+        vi is vi + 1
+    if sv.version != expv:
+        sweep_bad is sweep_bad + 1
+    if (eq_keydir of [sv.keydir, expstates[expv]]) == 0:
+        sweep_bad is sweep_bad + 1
+    o is o + 1
+check of ["crash sweep offsets", loglen + 1, btot + 1]
+check of ["crash sweep clean", sweep_bad, 0]
+
+# ---- compaction: the rename path on regionfs ------------------------
+pre_log is buf_len of (read_bytes_buf of "kv.log")
+nlive is store_compact of s2
+check of ["compact live count", nlive, 3]
+check of ["compact tmp gone", file_exists of "kv.log.compact", 0]
+post_log is buf_len of (read_bytes_buf of "kv.log")
+check of ["compacted log smaller", post_log < pre_log, 1]
+s4 is store_open of "kv.log"
+check of ["post-compact version", s4.version, 3]
+check of ["post-compact keydir", eq_keydir of [s4.keydir, expstates[6]], 1]
+
+# compaction determinism: same live state -> byte-identical log
+c1 is buf_to_list of (read_bytes_buf of "kv.log")
+store_compact of s4
+c2 is buf_to_list of (read_bytes_buf of "kv.log")
+same is 1
+if (len of c1) != (len of c2):
+    same is 0
+ci is 0
+loop while (same == 1) and (ci < (len of c1)):
+    if c1[ci] != c2[ci]:
+        same is 0
+    ci is ci + 1
+check of ["compaction deterministic", same, 1]
+
+print of ("HARNESS failures: " + (str of fails))
+if fails > 0:
+    throw of "tidefs twin harness FAILED"

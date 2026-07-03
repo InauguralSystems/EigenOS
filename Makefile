@@ -44,7 +44,20 @@ OBJS   := build/boot.o build/kernel.o build/pmm.o build/serial.o \
 # The ROM bundle (M7.5): the EigenScript stdlib + demos/ baked into the
 # image, served via the eigs_set_source_provider seam — `import` on bare
 # metal with no filesystem. Regenerates when any source or the tool moves.
-BUNDLE_SRCS := $(wildcard $(EIGS)/lib/*.eigs) $(wildcard demos/*.eigs)
+#
+# M10: `import tidefs` = tidelog's store mounted on regionfs. The module
+# is a BUILD-TIME CONCATENATION (the load_file composition tidelog.eigs
+# does hosted, done here instead — load_file is carved freestanding):
+# regionfs first, so its defines provide the carved fs-builtin names
+# (write_bytes/read_bytes_buf/rename/file_exists) in the same scope the
+# byte-unmodified store resolves them from. Couples to the sibling
+# ../tidelog checkout, like ../EigenScript.
+TIDELOG := ../tidelog
+build/gen/tidefs.eigs: demos/regionfs.eigs $(TIDELOG)/src/cbor.eigs $(TIDELOG)/src/store.eigs | build
+	mkdir -p build/gen
+	{ cat demos/regionfs.eigs; echo; cat $(TIDELOG)/src/cbor.eigs; echo; cat $(TIDELOG)/src/store.eigs; } > $@
+
+BUNDLE_SRCS := $(wildcard $(EIGS)/lib/*.eigs) $(wildcard demos/*.eigs) build/gen/tidefs.eigs
 KERNEL := build/EigenOS.elf
 ISO    := build/EigenOS.iso
 

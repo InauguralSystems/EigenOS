@@ -225,7 +225,14 @@ rejects ELF64, so GRUB does the loading.
   rename(2)'s atomicity with no kernel underneath, crash-swept at
   every sector-write boundary hosted. Mount verifies the magic
   before unlocking writes (a Linux disk never unlocks); files
-  survive guest reboots. Next: mount tidelog's store on it
+  survive guest reboots. And **`import tidefs` — tidelog's
+  crash-recoverable store, byte-unmodified, mounted on it**: put a
+  key at the REPL, reboot the machine, `store_open` replays the log
+  and the value is back — and `store_get_at` reads past states from
+  behind the reboot. The durability primitives tidelog drove into
+  the language hosted (#248–250) re-proven with no OS underneath,
+  zero code changes. Next: un-carve the C runtime's fs builtins
+  onto the store
 - [ ] **M11** — the system journal: trace tape over machine state;
   `prev of` / `state_at` against the computer itself; recovery = replay
 - [ ] **M12** — devices as `.eigs` drivers (port I/O, MMIO, IRQ callbacks

@@ -452,10 +452,33 @@ upstream, never worked around.
       QEMU: mount refused the unformatted scratch disk, format, a
       600-byte write + 100-byte RMW append read back exact (70057
       signature), GUEST REBOOT, mount-by-magic auto-unlock, bytes
-      intact, rename verified under the new name. NEXT: mount
-      tidelog's store.eigs/cbor.eigs on this seam (the #248–250
-      durability primitives re-proven with no OS underneath) → then
-      the read_text/import un-carve story.
+      intact, rename verified under the new name.
+      **The store, mounted (DONE 2026-07-03)** — `import tidefs` =
+      tidelog's `store.eigs` + `cbor.eigs`, BYTE-UNMODIFIED, on
+      regionfs. The composition is a build-time concatenation
+      (regionfs first, so its defines provide the carved fs-builtin
+      names in the scope the store resolves them from — the same
+      load_file composition tidelog.eigs does hosted, done in the
+      Makefile because load_file is carved). ZERO findings: the four
+      primitives the tidelog port drove upstream (#248 str_from_bytes
+      + f64 codecs, #249 append write_bytes, #250 rename/remove_file)
+      were exactly sufficient — nothing else was missing, nothing was
+      worked around. Hosted twin (tools/tidefs_twin_hosted.eigs, 21
+      checks): ops + recovery-equivalence reopen, temporal reads,
+      tidelog's own crash model re-run on this substrate (an
+      every-byte-offset truncation sweep of the log, recovery landing
+      exactly on the committed-record-prefix state at ALL offsets),
+      compaction through the earned rename (temp gone, log smaller,
+      byte-deterministic). QEMU: puts/overwrite at the REPL, GUEST
+      REBOOT, store_open replayed the log to version 3 with values
+      intact, and `store_get_at` read the PRE-OVERWRITE value from
+      behind the reboot — time travel over durable machine state on
+      bare metal; store_compact live on the metal too. Constraint
+      noted: store paths ≤ 12 chars (the ".compact" temp must fit
+      regionfs's 20-char names). REMAINING for M10: the un-carve
+      story — read_text/write_bytes/import backed by the store for
+      the C runtime (the fs-provider seam), and an [m10] boot
+      self-test row exercising the stack end to end.
 - [ ] **M11 — the system journal.** The trace tape as machine journal:
       `prev of` and `state_at` against system state, boot-to-now history
       as a first-class object, crash recovery as replay rather than fsck
