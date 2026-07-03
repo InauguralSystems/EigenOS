@@ -140,8 +140,25 @@ append of [tape, [20, {"type": "keydown", "key": "*", "code": 42}]]
 append of [tape, [21, {"type": "keydown", "key": "space", "code": 32}]]
 append of [tape, [22, {"type": "keydown", "key": "7", "code": 55}]]
 append of [tape, [23, {"type": "keydown", "key": "return", "code": 13}]]
-append of [tape, [24, {"type": "mousedown", "x": 900, "y": 200}]]
-append of [tape, [25, {"type": "mousedown", "x": 30, "y": 700}]]
+# block input: "if 1:" opens a block, " x is 9" accumulates, a blank
+# line submits the whole block in ONE task_eval
+append of [tape, [24, {"type": "keydown", "key": "i", "code": 105}]]
+append of [tape, [24, {"type": "keydown", "key": "f", "code": 102}]]
+append of [tape, [24, {"type": "keydown", "key": "space", "code": 32}]]
+append of [tape, [24, {"type": "keydown", "key": "1", "code": 49}]]
+append of [tape, [24, {"type": "keydown", "key": ":", "code": 58}]]
+append of [tape, [24, {"type": "keydown", "key": "return", "code": 13}]]
+append of [tape, [25, {"type": "keydown", "key": "space", "code": 32}]]
+append of [tape, [25, {"type": "keydown", "key": "x", "code": 120}]]
+append of [tape, [25, {"type": "keydown", "key": "space", "code": 32}]]
+append of [tape, [25, {"type": "keydown", "key": "i", "code": 105}]]
+append of [tape, [25, {"type": "keydown", "key": "s", "code": 115}]]
+append of [tape, [25, {"type": "keydown", "key": "space", "code": 32}]]
+append of [tape, [25, {"type": "keydown", "key": "9", "code": 57}]]
+append of [tape, [25, {"type": "keydown", "key": "return", "code": 13}]]
+append of [tape, [26, {"type": "keydown", "key": "return", "code": 13}]]
+append of [tape, [28, {"type": "mousedown", "x": 900, "y": 200}]]
+append of [tape, [29, {"type": "mousedown", "x": 30, "y": 700}]]
 # resize vitals (focused, at 820,104,180,240): grab the grip with an
 # offset from the corner (-5,-4), drop the corner near (1015,424)
 append of [tape, [30, {"type": "mousedown", "x": 995, "y": 340}]]
@@ -213,15 +230,23 @@ check of ["wheel2 dy", wheellog[1][1], 1]
 check of ["wheel3 to counter", wheellog[2][0], 0]
 
 # the repl line assembled + evaled on the repl task; the transcript
-# lives in the window RECORD (each repl window owns its own)
+# lives in the window RECORD (each repl window owns its own); the
+# ':'-block accumulated two lines and submitted as ONE eval with the
+# newline join, then cleared the block state
 rw is wins[3]
-check of ["eval count", len of evals, 1]
+check of ["eval count", len of evals, 2]
 check of ["eval on repl state", evals[0][0], 3]
 check of ["eval src", evals[0][1], "6 * 7"]
-check of ["rlines count", len of rw.rlines, 2]
+check of ["block eval on repl state", evals[1][0], 3]
+check of ["block eval src", evals[1][1], "if 1:\n x is 9"]
+check of ["rlines count", len of rw.rlines, 5]
 check of ["rlines echo", rw.rlines[0], "eigs> 6 * 7"]
 check of ["rlines result", rw.rlines[1], "42stub"]
+check of ["rlines block open", rw.rlines[2], "eigs> if 1:"]
+check of ["rlines block cont", rw.rlines[3], "....>  x is 9"]
+check of ["rlines block result", rw.rlines[4], "42stub"]
 check of ["rline cleared", rw.rline, ""]
+check of ["rblock cleared", rw.rblock, ""]
 
 # resize: the grow drag put vitals at 195x320 (corner offset -5,-4,
 # pointer at 1010,420) — proven from the viewport history; the shrink

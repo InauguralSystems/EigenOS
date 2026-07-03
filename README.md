@@ -179,7 +179,7 @@ rejects ELF64, so GRUB does the loading.
   typed observer loop→converged.
 - [ ] **M7** — boot the T3200 (dual-boot via its resident Linux's GRUB;
   VGA + keyboard, no serial)
-- [~] **MD** — the desktop, phase 1 done: windows are observed
+- [x] **MD** — the desktop, complete: windows are observed
   bindings — `import desktop` runs a window manager written in
   EigenScript (window = task = `EigsState`, viewport-clipped drawing,
   click focus + drag + grip-resize + z-order + a launcher bar and
@@ -188,11 +188,12 @@ rejects ELF64, so GRUB does the loading.
   window's title turns red because `stable of` its progress trajectory
   says so, and the **REPL is a window**: lines typed into it evaluate
   on that window's own isolated `EigsState` (`task_eval`, strings by
-  copy) — quit the desktop and its bindings are gone. The WM is
-  list-driven: a window is a record in a z-ordered list, and adding
-  one is a single `spawn_win` call (observer health stays in named
-  scalar slots — a trajectory needs a binding, and list elements
-  have none).
+  copy) — including the boot console's `:`-block contract for
+  multi-line defines — quit the desktop and its bindings are gone.
+  The WM is list-driven: a window is a record in a z-ordered list,
+  and adding one is a single `spawn_win` call (observer health stays
+  in named scalar slots — a trajectory needs a binding, and list
+  elements have none).
 - [x] **M7.5** — the machine has software: the EigenScript stdlib (67
   modules) + demos baked into the image as a ROM bundle, served through
   the upstream source-provider seam (EigenScript PR #362) — `import

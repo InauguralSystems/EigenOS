@@ -222,7 +222,7 @@ upstream, never worked around.
       keydown/keyup pairs, wheel ±1 both directions, button events,
       draw.eigs regression. Remaining known subset: no gfx_rrect/
       gfx_fb, key events have no SDL scancode field.
-- [ ] **MD — the desktop.** The general-purpose capstone: EigenOS as a
+- [x] **MD — the desktop (DONE 2026-07-03).** The general-purpose capstone: EigenOS as a
       personal computer in the full sense, and the niche answer to it —
       **windows are observed bindings**. A window system written in
       EigenScript over M9 tasks (window = task = `EigsState`) and M9.5
@@ -356,8 +356,23 @@ upstream, never worked around.
       window held focus at that moment. QEMU: three notches → the
       focused counter reads "wheel: 3" (sign matches the SDL y=+1-up
       convention end to end); focus moved to bounce, two more notches,
-      the counter's sum stays 3. Remaining for MD: multi-line
-      (`:`-block) input in REPL windows.
+      the counter's sum stays 3.
+      **Block input in REPL windows (DONE 2026-07-03)** — the boot
+      console's block contract, per window: a line ending in `:`
+      opens a block (the prompt turns `....>`), lines accumulate in
+      the window record's `rblock`, and a blank line submits the
+      whole block as ONE `task_eval` on the window's own state. Pure
+      WM script — the kernel seam already took arbitrary source.
+      Twin harness: the block joins with newlines, submits once,
+      echoes `eigs>`/`....>` correctly, clears its state. QEMU: a
+      two-line `define d(n) as: / return n * 2` typed through the
+      `....>` prompt into the repl window, then `d of 21` → `42` on
+      that window's isolated state. MD IS COMPLETE — the desktop
+      milestone's full arc (viewported window tasks, drag, z-order,
+      resize, launcher + close over the slot pool, key + wheel
+      dispatch to focus, independent block-capable REPL windows,
+      observer-verdict titles) landed as WM script over five small
+      kernel seams.
 
 ## Phase 4 — the durable, replayable machine
 

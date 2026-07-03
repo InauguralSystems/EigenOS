@@ -29,8 +29,10 @@
 #                      (task_wheel accumulates deltas; the counter
 #                      shows its wheel sum) - every repl window is a
 #                      real EigenScript REPL on its own isolated
-#                      EigsState, each with its own input line -
-#                      ESC quits
+#                      EigsState with its own input line, and the boot
+#                      console's block contract works there too: a
+#                      line ending in ':' opens a block ('....>'),
+#                      a blank line runs it - ESC quits
 #
 # Windows: win_counter (draws + takes keys), win_bounce (always
 # advancing), task_stuck (the M9 wedged worker — its title turns red
@@ -70,7 +72,7 @@ define spawn_win(mod, wx, wy, ww, wh, title, kind) as:
         append of [freeslots, slot]
         return 0 - 1
     task_view of [id, wx, wy, ww, wh]
-    append of [wins, {"id": id, "x": wx, "y": wy, "w": ww, "h": wh, "title": title, "kind": kind, "slot": slot, "rline": "", "rlines": []}]
+    append of [wins, {"id": id, "x": wx, "y": wy, "w": ww, "h": wh, "title": title, "kind": kind, "slot": slot, "rline": "", "rlines": [], "rblock": ""}]
     return id
 
 define launch(ai) as:
@@ -160,6 +162,14 @@ define in_grip(px, py, rec) as:
 define in_close(px, py, rec) as:
     # the x box at the right end of the title bar
     if (px >= rec.x + rec.w - 18) and (px < rec.x + rec.w + 2) and (py >= rec.y - 24) and (py < rec.y - 2):
+        return 1
+    return 0
+
+define ends_with_colon(s) as:
+    local n is len of s
+    if n == 0:
+        return 0
+    if (substr of [s, n - 1, n]) == ":":
         return 1
     return 0
 
@@ -292,7 +302,10 @@ define draw_one(rec, focused, stalled) as:
         for tl in rec.rlines:
             gfx_text of [rec.x + 6, rec.y + 6 + i * 16, tl, 185, 205, 185, 1]
             i is i + 1
-        gfx_text of [rec.x + 6, rec.y + 6 + i * 16, "eigs> " + rec.rline + "_", 240, 240, 255, 1]
+        local pr is "eigs> "
+        if (len of rec.rblock) > 0:
+            pr is "....> "
+        gfx_text of [rec.x + 6, rec.y + 6 + i * 16, pr + rec.rline + "_", 240, 240, 255, 1]
         gfx_clip of null
     local id is rec.id
     task_step of id
@@ -360,15 +373,35 @@ if ok == 1:
                                 if rn > 0:
                                     foc.rline is substr of [foc.rline, 0, rn - 1]
                             if ev.key == "return":
-                                if (len of foc.rline) > 0:
-                                    append of [foc.rlines, "eigs> " + foc.rline]
-                                    fid is foc.id
-                                    res is task_eval of [fid, foc.rline]
-                                    if (len of res) > 0:
-                                        append of [foc.rlines, res]
-                                    loop while (len of foc.rlines) > 11:
-                                        foc.rlines is list.drop of [foc.rlines, 1]
+                                # the boot console's block contract: a
+                                # line ending in ':' opens a block
+                                # ('....>' prompt), lines accumulate, a
+                                # BLANK line submits the whole block to
+                                # the window's state in one task_eval
+                                if (len of foc.rblock) > 0:
+                                    if (len of foc.rline) == 0:
+                                        fid is foc.id
+                                        res is task_eval of [fid, foc.rblock]
+                                        if (len of res) > 0:
+                                            append of [foc.rlines, res]
+                                        foc.rblock is ""
+                                    else:
+                                        append of [foc.rlines, "....> " + foc.rline]
+                                        foc.rblock is foc.rblock + "\n" + foc.rline
                                     foc.rline is ""
+                                else:
+                                    if (len of foc.rline) > 0:
+                                        append of [foc.rlines, "eigs> " + foc.rline]
+                                        if (ends_with_colon of foc.rline) == 1:
+                                            foc.rblock is foc.rline
+                                        else:
+                                            fid is foc.id
+                                            res is task_eval of [fid, foc.rline]
+                                            if (len of res) > 0:
+                                                append of [foc.rlines, res]
+                                        foc.rline is ""
+                                loop while (len of foc.rlines) > 11:
+                                    foc.rlines is list.drop of [foc.rlines, 1]
                         if foc.kind != "repl":
                             if ev.key != "escape":
                                 fid is foc.id
