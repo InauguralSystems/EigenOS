@@ -10,10 +10,14 @@
 # Exits nonzero on any failure — the WM regression gate for MD work.
 
 # ---- stub state ----
-nextid is 100
 spawned is []
 prog is {}
 stuckmods is {}
+alivemap is {}
+ai is 0
+loop while ai < 8:
+    alivemap[str of ai] is 0
+    ai is ai + 1
 keyslog is []
 evals is []
 views is {}
@@ -25,10 +29,19 @@ tapei is 0
 
 # ---- kernel task seams ----
 define task_spawn(mod) as:
-    local id is nextid
-    nextid is nextid + 1
+    # kernel-faithful (hal.c): lowest free slot 0..7, ids are REUSED
+    # after a kill (MAX_TASKS = 8), a full table refuses with -1
+    local id is 0 - 1
+    local i is 0
+    loop while i < 8:
+        if (alivemap[str of i] == 0) and (id < 0):
+            id is i
+        i is i + 1
+    if id < 0:
+        return 0 - 1
     append of [spawned, mod]
     local k is str of id
+    alivemap[k] is 1
     prog[k] is 1.0
     stuckmods[k] is 0
     if mod == "task_stuck":
@@ -61,6 +74,7 @@ define task_eval(id, src) as:
     return "42stub"
 
 define task_kill(id) as:
+    alivemap[str of id] is 0
     killed is killed + 1
     return 0
 
@@ -102,8 +116,8 @@ define gfx_poll(x) as:
     return null
 
 # ---- the event tape ----
-# initial spawn order: 100 counter, 101 bounce, 102 stuck, 103 repl,
-# 104 vitals; to_top(0) makes counter focused (last).
+# initial spawn order: 0 counter, 1 bounce, 2 stuck, 3 repl, 4 vitals;
+# to_top(0) makes counter focused (last).
 append of [tape, [5, {"type": "mousedown", "x": 600, "y": 150}]]
 append of [tape, [6, {"type": "mousemove", "x": 700, "y": 230}]]
 append of [tape, [7, {"type": "mouseup"}]]
@@ -129,6 +143,16 @@ append of [tape, [32, {"type": "mouseup"}]]
 append of [tape, [34, {"type": "mousedown", "x": 1008, "y": 418}]]
 append of [tape, [35, {"type": "mousemove", "x": 830, "y": 120}]]
 append of [tape, [36, {"type": "mouseup"}]]
+# launcher: chips sit at [64+i*64, 64+i*64+56) on the y<28 bar. Launch
+# a second bounce, counter, stuck (slots 5,6,7 -> budget empty), then
+# a REFUSED vitals (0 free); close the new stuck via its title-bar x
+# (frees slot 7 + kernel id 7); relaunch vitals into the reused id+slot
+append of [tape, [40, {"type": "mousedown", "x": 156, "y": 14}]]
+append of [tape, [42, {"type": "mousedown", "x": 92, "y": 14}]]
+append of [tape, [44, {"type": "mousedown", "x": 220, "y": 14}]]
+append of [tape, [46, {"type": "mousedown", "x": 348, "y": 14}]]
+append of [tape, [48, {"type": "mousedown", "x": 420, "y": 130}]]
+append of [tape, [50, {"type": "mousedown", "x": 348, "y": 14}]]
 append of [tape, [80, {"type": "keydown", "key": "escape", "code": 27}]]
 
 # ---- run the WM ----
@@ -145,18 +169,19 @@ define check(label, got, want) as:
         print of ("FAIL " + label + ": got " + (str of got) + " want " + (str of want))
     return 0
 
-# z-order after the click sequence: stuck, bounce, counter, repl, vitals
-check of ["z0 stuck back", wins[0].id, 102]
-check of ["z1 bounce", wins[1].id, 101]
-check of ["z2 counter", wins[2].id, 100]
-check of ["z3 repl", wins[3].id, 103]
-check of ["z4 vitals focused", wins[4].id, 104]
+# z-order after the click sequence: stuck, bounce, counter, repl,
+# vitals, then the three launched windows
+check of ["z0 stuck back", wins[0].id, 2]
+check of ["z1 bounce", wins[1].id, 1]
+check of ["z2 counter", wins[2].id, 0]
+check of ["z3 repl", wins[3].id, 3]
+check of ["z4 vitals", wins[4].id, 4]
 
 # drag moved bounce: grab at (600,150) offset (180,-14), drop pointer at
 # (700,230) -> window (520,244); record and viewport must agree
 check of ["drag x", wins[1].x, 520]
 check of ["drag y", wins[1].y, 244]
-bview is views["101"]
+bview is views["1"]
 check of ["view x", bview[0], 520]
 check of ["view y", bview[1], 244]
 check of ["view w", bview[2], 360]
@@ -165,19 +190,21 @@ check of ["view h", bview[3], 240]
 # key routing followed focus: 'x' to bounce (focused after f5 click),
 # 'a' to counter (focused after f12 click); escape/repl keys never routed
 check of ["keylog count", len of keyslog, 2]
-check of ["key1 to bounce", keyslog[0][0], 101]
+check of ["key1 to bounce", keyslog[0][0], 1]
 check of ["key1 code", keyslog[0][1], 120]
-check of ["key2 to counter", keyslog[1][0], 100]
+check of ["key2 to counter", keyslog[1][0], 0]
 check of ["key2 code", keyslog[1][1], 97]
 
-# the repl line assembled + evaled on the repl task, transcript updated
+# the repl line assembled + evaled on the repl task; the transcript
+# lives in the window RECORD (each repl window owns its own)
+rw is wins[3]
 check of ["eval count", len of evals, 1]
-check of ["eval on repl state", evals[0][0], 103]
+check of ["eval on repl state", evals[0][0], 3]
 check of ["eval src", evals[0][1], "6 * 7"]
-check of ["rlines count", len of rlines, 2]
-check of ["rlines echo", rlines[0], "eigs> 6 * 7"]
-check of ["rlines result", rlines[1], "42stub"]
-check of ["rline cleared", rline, ""]
+check of ["rlines count", len of rw.rlines, 2]
+check of ["rlines echo", rw.rlines[0], "eigs> 6 * 7"]
+check of ["rlines result", rw.rlines[1], "42stub"]
+check of ["rline cleared", rw.rline, ""]
 
 # resize: the grow drag put vitals at 195x320 (corner offset -5,-4,
 # pointer at 1010,420) — proven from the viewport history; the shrink
@@ -185,24 +212,44 @@ check of ["rline cleared", rline, ""]
 # focused but never dragged (x,y untouched)
 grow_seen is 0
 for ve in viewlog:
-    if (ve[0] == 104) and (ve[3] == 195) and (ve[4] == 320):
+    if (ve[0] == 4) and (ve[3] == 195) and (ve[4] == 320):
         grow_seen is 1
 check of ["resize grow logged", grow_seen, 1]
 check of ["resize clamp w", wins[4].w, 120]
 check of ["resize clamp h", wins[4].h, 60]
 check of ["resize kept x", wins[4].x, 820]
 check of ["resize kept y", wins[4].y, 104]
-vview is views["104"]
+vview is views["4"]
 check of ["resize view w", vview[2], 120]
 check of ["resize view h", vview[3], 60]
 
-# teardown killed every window
-check of ["killed all", killed, 5]
+# launcher: three launches filled the slot budget (5,6,7 cascade-
+# placed), the fourth was refused BEFORE task_spawn (9 spawn calls
+# total, not 10), the close killed the task and freed its slot, the
+# relaunch reused the kernel id AND the slot, and by ESC the reused
+# slot's trajectory has recovered from its previous tenant (the new
+# vitals reads advancing, not the dead stuck's stable)
+check of ["eight windows", len of wins, 8]
+check of ["launch2 id", wins[5].id, 5]
+check of ["launch2 title", wins[5].title, "bounce"]
+check of ["launch2 x", wins[5].x, 80]
+check of ["launch2 y", wins[5].y, 70]
+check of ["launch3 id", wins[6].id, 6]
+check of ["relaunch reused id", wins[7].id, 7]
+check of ["relaunch title", wins[7].title, "vitals"]
+check of ["relaunch slot", wins[7].slot, 7]
+check of ["relaunch cascade x", wins[7].x, 212]
+check of ["spawn calls", len of spawned, 9]
+check of ["budget empty", len of freeslots, 0]
+check of ["reused slot recovered", sample_health of [7, 7], 0]
+
+# teardown killed every remaining window (8) + the one closed live
+check of ["killed all", killed, 9]
 
 # observer through the slot dispatch: the wedged task (slot 2) reads
 # stable; the advancing counter (slot 0) does not
-check of ["stuck reads stable", sample_health of [2, 102], 1]
-check of ["advancing not stable", sample_health of [0, 100], 0]
+check of ["stuck reads stable", sample_health of [2, 2], 1]
+check of ["advancing not stable", sample_health of [0, 0], 0]
 
 print of ("HARNESS failures: " + (str of fails))
 if fails > 0:

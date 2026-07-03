@@ -182,8 +182,9 @@ rejects ELF64, so GRUB does the loading.
 - [~] **MD** — the desktop, phase 1 done: windows are observed
   bindings — `import desktop` runs a window manager written in
   EigenScript (window = task = `EigsState`, viewport-clipped drawing,
-  click focus + drag + grip-resize + z-order, key dispatch across
-  states), a hung
+  click focus + drag + grip-resize + z-order + a launcher bar and
+  title-bar close managing an 8-slot window budget, key dispatch
+  across states), a hung
   window's title turns red because `stable of` its progress trajectory
   says so, and the **REPL is a window**: lines typed into it evaluate
   on that window's own isolated `EigsState` (`task_eval`, strings by

@@ -316,7 +316,35 @@ upstream, never worked around.
       log), both minimum clamps, and that a grip press never moves
       the window; QEMU-proven growing bounce to 440x300 over its
       neighbors, then shrinking it far below minimum onto the 120x60
-      clamp. Remaining for MD: a launcher, wheel routing to focus,
+      clamp.
+      **Launcher + close (DONE 2026-07-03)** — the window LIFECYCLE
+      pair, WM script only: a top launcher bar (one chip per app from
+      a data table, cascade placement, launched window arrives
+      focused) and a title-bar x that kills the task and returns its
+      observer slot. The slot budget became a free pool; spawn_win
+      refuses past it (bar shows the free count, red at zero — with a
+      launcher, "full" is a reachable user state, not a programming
+      error, so the throw became a visible refusal). The kernel table
+      needed nothing: MAX_TASKS was already 8 and task_kill already
+      frees ids for reuse — the twin harness stub now models that id
+      reuse kernel-faithfully. repl line/transcript moved into the
+      window record, so every launched repl window is independent.
+      **The launcher work also caught a live observer finding**: raw
+      progress counters false-read `stable` in the ~20..80 magnitude
+      band and go entropy-dark past ~80 (the #294 flat-entropy blind
+      spot — entropy_of_num decays with magnitude; report_value's
+      relative step decays too). The WM now observes a bounded cyclic
+      signature, `1.5 + (progress % 8)`: a wedged task is a nonzero
+      constant (stable at any magnitude, forever), an advancing one
+      cycles (never stable) — instrument choice, not a language
+      workaround; caught by the twin harness at 30 samples, invisible
+      in every previous long-warm-up screendump. Proven: harness
+      (46 asserts: launch cascade, budget exhaustion, refusal BEFORE
+      task_spawn, close frees slot+id, relaunch reuses both, reused
+      slot's verdict recovers within one window) + QEMU (3 launches,
+      "0 free" red, refused 4th, x-close, relaunch into the freed
+      slot; a freshly launched stuck worker reads red within its
+      first window). Remaining for MD: wheel routing to focus,
       multi-line (`:`-block) input in REPL windows.
 
 ## Phase 4 — the durable, replayable machine
