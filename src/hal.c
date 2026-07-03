@@ -173,6 +173,127 @@ static EigsValue *vital_mem_total(EigsValue *a)   { (void)a; return eigs_value_n
 static EigsValue *vital_ticks(EigsValue *a)       { (void)a; return vital_nondet("ticks", (double)timer_ticks()); }
 static EigsValue *vital_tick_hz(EigsValue *a)     { (void)a; return eigs_value_new_num((double)timer_hz()); }
 
+/* helpers defined further down (M9.5/M10 sections) */
+static double list_num(EigsValue *l, int i);
+static int arg_list_min(EigsValue *a, int n);
+static int path_arg(EigsValue *v, char *dst, int cap);
+
+/* ---- M11: machine history — state_at against the MACHINE ----
+ * The language's `state_at of L` is line-keyed (a program's assignment
+ * timeline); machine time is the other axis (tidelog's F-TEMPORAL-1
+ * drew exactly this boundary). So machine history is TIME-keyed: a
+ * sampler ring records the vitals about once a second from the REPL's
+ * idle loop and the gfx frame path (cooperative machine, cooperative
+ * sampler — a long eval samples nothing), boot to now, bounded.
+ * Queries:
+ *   vital_at of ["heap_used", t]     reading at the latest sample <= t
+ *                                    (ticks); null before history
+ *   vital_series of ["heap_used", n] buffer of the last n samples
+ *   history_span of []               [oldest_tick, newest_tick, count]
+ * All three are tape-participating nondet — a journaled session's
+ * history queries replay exactly (series buffers ride the N records'
+ * b[...] form). */
+#define VH_CAP 4096                     /* ~68 min at 1 Hz */
+static struct {
+    uint64_t tick, heap_used, heap_mapped, mem_free;
+} g_vh[VH_CAP];
+static unsigned g_vh_head, g_vh_count;  /* head = next write slot */
+static uint64_t g_vh_last_tick;
+
+static void vitals_sample_maybe(void) {
+    uint64_t now = timer_ticks();
+    uint32_t hz = timer_hz(); if (!hz) hz = 100;
+    if (g_vh_count && now - g_vh_last_tick < hz) return;   /* ~1 Hz */
+    g_vh_last_tick = now;
+    g_vh[g_vh_head].tick        = now;
+    g_vh[g_vh_head].heap_used   = kheap_used_bytes();
+    g_vh[g_vh_head].heap_mapped = kheap_mapped_bytes();
+    g_vh[g_vh_head].mem_free    = pmm_free_pages();
+    g_vh_head = (g_vh_head + 1) % VH_CAP;
+    if (g_vh_count < VH_CAP) g_vh_count++;
+}
+
+/* sample i (0 = oldest) -> the named field; -1 on unknown name */
+static double vh_field(unsigned i, const char *name) {
+    unsigned idx = (g_vh_head + VH_CAP - g_vh_count + i) % VH_CAP;
+    if (strcmp(name, "heap_used") == 0)      return (double)g_vh[idx].heap_used;
+    if (strcmp(name, "heap_mapped") == 0)    return (double)g_vh[idx].heap_mapped;
+    if (strcmp(name, "mem_free_pages") == 0) return (double)g_vh[idx].mem_free;
+    if (strcmp(name, "ticks") == 0)          return (double)g_vh[idx].tick;
+    return -1.0;
+}
+
+static uint64_t vh_tick(unsigned i) {
+    return g_vh[(g_vh_head + VH_CAP - g_vh_count + i) % VH_CAP].tick;
+}
+
+static EigsValue *b_vital_at(EigsValue *a) {   /* [name, tick] -> num|null */
+    EigsValue *v;
+    if (eigs_replay_take("vital_at", &v)) return v;
+    char name[32];
+    v = eigs_value_new_null();
+    if (arg_list_min(a, 2)) {
+        EigsValue *nv = eigs_value_list_get(a, 0);
+        int ok = nv && path_arg(nv, name, sizeof name);
+        if (nv) eigs_value_release(nv);
+        double t = list_num(a, 1);
+        if (ok && g_vh_count) {
+            /* latest sample at or before t; none -> null (before history) */
+            int found = -1;
+            for (unsigned i = 0; i < g_vh_count; i++) {
+                if ((double)vh_tick(i) > t) break;
+                found = (int)i;
+            }
+            if (found >= 0) {
+                double x = vh_field((unsigned)found, name);
+                if (x >= 0) {
+                    eigs_value_release(v);
+                    v = eigs_value_new_num(x);
+                }
+            }
+        }
+    }
+    eigs_trace_record_nondet("vital_at", v);
+    return v;
+}
+
+static EigsValue *b_vital_series(EigsValue *a) { /* [name, n] -> buffer */
+    EigsValue *v;
+    if (eigs_replay_take("vital_series", &v)) return v;
+    char name[32];
+    int n = 0, ok = 0;
+    if (arg_list_min(a, 2)) {
+        EigsValue *nv = eigs_value_list_get(a, 0);
+        ok = nv && path_arg(nv, name, sizeof name);
+        if (nv) eigs_value_release(nv);
+        n = (int)list_num(a, 1);
+    }
+    if (!ok || n <= 0) n = 0;
+    if ((unsigned)n > g_vh_count) n = (int)g_vh_count;
+    v = eigs_value_new_buffer(n);
+    for (int i = 0; i < n; i++)                 /* oldest->newest window */
+        eigs_value_buffer_set(v, i,
+            vh_field(g_vh_count - (unsigned)n + (unsigned)i, name));
+    eigs_trace_record_nondet("vital_series", v);
+    return v;
+}
+
+static EigsValue *b_history_span(EigsValue *a) { /* -> [oldest, newest, count] */
+    (void)a;
+    EigsValue *v;
+    if (eigs_replay_take("history_span", &v)) return v;
+    v = eigs_value_new_list(3);
+    EigsValue *e;
+    e = eigs_value_new_num(g_vh_count ? (double)vh_tick(0) : 0);
+    eigs_value_list_append(v, e); eigs_value_release(e);
+    e = eigs_value_new_num(g_vh_count ? (double)vh_tick(g_vh_count - 1) : 0);
+    eigs_value_list_append(v, e); eigs_value_release(e);
+    e = eigs_value_new_num((double)g_vh_count);
+    eigs_value_list_append(v, e); eigs_value_release(e);
+    eigs_trace_record_nondet("history_span", v);
+    return v;
+}
+
 static void register_vitals(void) {
     eigs_register_function("heap_used",       vital_heap_used);
     eigs_register_function("heap_mapped",     vital_heap_mapped);
@@ -180,6 +301,9 @@ static void register_vitals(void) {
     eigs_register_function("mem_total_pages", vital_mem_total);
     eigs_register_function("ticks",           vital_ticks);
     eigs_register_function("tick_hz",         vital_tick_hz);
+    eigs_register_function("vital_at",        b_vital_at);
+    eigs_register_function("vital_series",    b_vital_series);
+    eigs_register_function("history_span",    b_history_span);
 }
 
 /* M9: cooperative multitasking — a task IS an EigsState. The upstream
@@ -1079,6 +1203,7 @@ static EigsValue *b_gfx_ticks(EigsValue *a) {
 }
 
 static EigsValue *b_gfx_delay(EigsValue *a) {
+    vitals_sample_maybe();               /* M11: gfx sessions sample too */
     if (a && eigs_value_type(a) == EIGS_TYPE_NUM)
         usleep((unsigned)(eigs_value_as_num(a) * 1000.0));
     return eigs_value_new_null();
@@ -1823,7 +1948,11 @@ void eigs_repl(void) {
 
     for (;;) {
         int c = kbd_getchar();
-        if (c < 0) { __asm__ volatile ("hlt"); continue; }   /* wait for a key */
+        if (c < 0) {
+            vitals_sample_maybe();       /* M11: machine history, ~1 Hz */
+            __asm__ volatile ("hlt");
+            continue;                    /* wait for a key */
+        }
         int maxlen = vga_cols() - ED_PROMPT - 1;
         if (maxlen > (int)sizeof(line) - 1) maxlen = (int)sizeof(line) - 1;
 

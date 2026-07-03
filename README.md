@@ -238,7 +238,11 @@ rejects ELF64, so GRUB does the loading.
   `lastboot`), so after an UNEXPECTED death — nothing manually saved
   — one command re-drives the lost session with its recorded machine
   readings and its bindings come back live: replay reconstructs
-  state, not just output;
+  state, not just output. And machine history is queryable:
+  `vital_at of ["heap_used", t]` answers what the machine's memory
+  was at a past instant from a boot-to-now sampler ring, and a
+  `vital_series` trajectory through an observed binding lets the
+  observer pass verdicts on the machine's own past;
   `prev of` / `state_at` against the computer itself; recovery = replay
 - [ ] **M12** — devices as `.eigs` drivers (port I/O, MMIO, IRQ callbacks
   from the language)

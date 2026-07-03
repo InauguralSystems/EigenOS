@@ -584,9 +584,28 @@ upstream, never worked around.
       three lines with the recorded readings and the dead session's
       bindings were live again; byte-dumps of the ring at every stage
       verified the pipeline (I/L/A/N records exactly as designed).
-      REMAINING for M11: `state_at` over machine history at the REPL,
-      and the liferaft-style chaos sweep of journal replay against
-      adversarial interleavings.
+      **Phase 4 — machine history, time-keyed (DONE 2026-07-03).**
+      `state_at of L` is line-keyed (a program's assignment timeline);
+      machine time is the other axis — tidelog's F-TEMPORAL-1 drew
+      exactly this boundary, so the machine-native answer is
+      TIME-keyed history: a sampler ring (4096 samples, ~68 min at
+      1 Hz) records the vitals from the REPL's idle loop and the gfx
+      frame path (cooperative machine, cooperative sampler), boot to
+      now, and three queries expose it — `vital_at of [name, t]` (the
+      state_at shape: the machine's reading at a past moment; null
+      before history), `vital_series of [name, n]` (a buffer
+      trajectory), `history_span of []`. All three are
+      tape-participating nondet, so journaled history queries replay
+      exactly (series buffers ride the N records' b[...] form).
+      QEMU-proven: 99 samples accumulated; a 16 MB allocation made
+      between two remembered instants, then
+      `(vital_at of ["heap_used", t1]) - (vital_at of ["heap_used", t0])`
+      answered 1.62881e+07 FROM THE RECORDED TIMELINE; and the
+      composition line — a `vital_series` trajectory poured through
+      an observed binding gave `report_value of hh` → "moving": the
+      observer passing verdicts on the machine's own past.
+      REMAINING for M11: the liferaft-style chaos sweep of journal
+      replay against adversarial interleavings.
 
 ## Phase 5 — outward
 
