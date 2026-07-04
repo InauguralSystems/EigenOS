@@ -1,0 +1,47 @@
+# The PC speaker, in EigenScript — the third pure-script device driver
+# over the M12 port seam (zero kernel C). PIT channel 2 makes the
+# square wave (command 0xB6 to 0x43, divisor = 1193182/freq to 0x42
+# lo/hi), port 0x61 bits 0-1 gate it to the speaker. The kernel's own
+# panic beeps use the same hardware; this is the script-owned version.
+#
+#   import spkr
+#   spkr.beep of []            # 880 Hz, 120 ms
+#   spkr.tone of [440, 300]    # any freq/duration
+#   spkr.chime of []           # the boot jingle (three rising notes)
+#
+# Port 0x61's other bits are system bits — always read-modify-write.
+# QEMU headless can't be heard; the honest oracle is the gate bits
+# (read 0x61 back). The T3200 has a real speaker: Sunday's proof.
+
+define on(freq) as:
+    if freq < 20:
+        return 0
+    local dv is 1193182 / freq
+    dv is dv - (dv % 1)
+    outb of [0x43, 0xB6]
+    outb of [0x42, dv % 256]
+    outb of [0x42, (dv - (dv % 256)) / 256]
+    local g is inb of 0x61
+    outb of [0x61, bit_or of [g, 3]]
+    return 1
+
+define off() as:
+    local g is inb of 0x61
+    outb of [0x61, bit_and of [g, 0xFC]]
+    return 1
+
+define tone(freq, ms) as:
+    if (on of (freq)) == 0:
+        return 0
+    gfx_delay of ms
+    off of []
+    return 1
+
+define beep() as:
+    return tone of [880, 120]
+
+define chime() as:
+    tone of [523, 110]
+    tone of [659, 110]
+    tone of [784, 160]
+    return 1

@@ -175,6 +175,35 @@ static EigsValue *vital_mem_total(EigsValue *a)   { (void)a; return eigs_value_n
 static EigsValue *vital_ticks(EigsValue *a)       { (void)a; return vital_nondet("ticks", (double)timer_ticks()); }
 static EigsValue *vital_tick_hz(EigsValue *a)     { (void)a; return eigs_value_new_num((double)timer_hz()); }
 
+/* CPU die-temperature MARGIN (degrees below TjMax) via the Core-2 DTS.
+ * Margin, not absolute: TjMax is model-specific and not architecturally
+ * exposed on Core 2 — the throttle distance is the honest reading, and
+ * it's the observer-shaped one (margin `diverging` downward = thermal
+ * trouble). CPUID.06H EAX bit 0 gates support; QEMU's core2duo model
+ * reports none, so -1 = absent there and the real reading lights up on
+ * the T3200. IA32_THERM_STATUS (0x19C) bits 22:16, valid bit 31. */
+static int g_dts_ok = -1;
+static EigsValue *vital_cpu_margin(EigsValue *a) {
+    (void)a;
+    if (g_dts_ok < 0) {
+        uint32_t ax, bx, cx, dx;
+        __asm__ volatile ("cpuid" : "=a"(ax), "=b"(bx), "=c"(cx), "=d"(dx) : "a"(0));
+        if (ax >= 6) {
+            __asm__ volatile ("cpuid" : "=a"(ax), "=b"(bx), "=c"(cx), "=d"(dx) : "a"(6));
+            g_dts_ok = (int)(ax & 1);
+        } else {
+            g_dts_ok = 0;
+        }
+    }
+    double m = -1;
+    if (g_dts_ok) {
+        uint32_t lo, hi;
+        __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0x19C));
+        if (lo & (1u << 31)) m = (double)((lo >> 16) & 0x7F);
+    }
+    return vital_nondet("cpu_margin", m);
+}
+
 /* helpers defined further down (M9.5/M10 sections) */
 static double list_num(EigsValue *l, int i);
 static int arg_list_min(EigsValue *a, int n);
@@ -303,6 +332,7 @@ static void register_vitals(void) {
     eigs_register_function("mem_total_pages", vital_mem_total);
     eigs_register_function("ticks",           vital_ticks);
     eigs_register_function("tick_hz",         vital_tick_hz);
+    eigs_register_function("cpu_margin",      vital_cpu_margin);
     eigs_register_function("vital_at",        b_vital_at);
     eigs_register_function("vital_series",    b_vital_series);
     eigs_register_function("history_span",    b_history_span);
@@ -2071,6 +2101,43 @@ int eigs_run_demo(void) {
     if (eigs_has_error()) { rtc_ok = 0; eigs_clear_error(); }
     if (!rtc_ok) {
         serial_write("[m12] rtc: script CMOS probe FAILED\n");
+        return 0;
+    }
+
+    /* Speaker driver (script) — QEMU headless has no ears, so the
+     * oracle is the gate: port 0x61 bits 0-1 read back set while on,
+     * clear after off. The audible proof is the T3200's real speaker. */
+    EigsValue *v15 = eigs_eval_string(
+        "import spkr\n"
+        "spkr.on of 440\n"
+        "g1 is bit_and of [(inb of 0x61), 3]\n"
+        "spkr.off of []\n"
+        "g2 is bit_and of [(inb of 0x61), 3]\n"
+        "(g1 == 3) and (g2 == 0)");
+    int spk_ok = v15 && eigs_value_type(v15) == EIGS_TYPE_NUM &&
+                 (int)eigs_value_as_num(v15) == 1;
+    if (v15) eigs_value_release(v15);
+    if (eigs_has_error()) { spk_ok = 0; eigs_clear_error(); }
+    serial_write(spk_ok ? "[m12] spkr: PIT ch2 gate on/off via script driver OK\n"
+                        : "[m12] spkr: gate probe FAILED\n");
+    if (!spk_ok) return 0;
+
+    /* CPU thermal margin: a real reading on DTS hardware (the T3200),
+     * a documented absence under QEMU's core2duo model — never a hang,
+     * never a #GP (CPUID-gated before any rdmsr). */
+    EigsValue *v16 = eigs_eval_string("cpu_margin of []");
+    double marg = (v16 && eigs_value_type(v16) == EIGS_TYPE_NUM)
+                      ? eigs_value_as_num(v16) : -2;
+    if (v16) eigs_value_release(v16);
+    if (eigs_has_error()) { marg = -2; eigs_clear_error(); }
+    if (marg >= 1 && marg <= 120) {
+        serial_write("[m12] cpu_margin: ");
+        serial_write_dec((uint64_t)marg);
+        serial_write(" C below TjMax (DTS) OK\n");
+    } else if ((int)marg == -1) {
+        serial_write("[m12] cpu_margin: absent (no DTS on this CPU model) OK\n");
+    } else {
+        serial_write("[m12] cpu_margin: probe FAILED\n");
         return 0;
     }
 

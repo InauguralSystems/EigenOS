@@ -742,6 +742,23 @@ upstream, never worked around.
           Disposition: port reads stay off the M11 tape (raw device
           access, same as blk/pci) — sample `rtc.unix of []` into a
           binding when a journaled session should carry the moment.
+    - [x] **Addendum — speaker + thermals + boot-day prep (DONE
+          2026-07-04).** `demos/spkr.eigs`: the PC speaker as the
+          THIRD pure-script driver (PIT ch2 + gate bits on 0x61,
+          read-modify-write discipline; twin gate
+          tools/spkr_twin_hosted.eigs asserts the divisor bytes and
+          that system bits survive) — QEMU's oracle is the gate bits
+          read back; the audible proof is the T3200's real speaker.
+          `cpu_margin` vital: Core-2 DTS via CPUID-gated rdmsr of
+          IA32_THERM_STATUS — degrees BELOW TjMax (the honest Core-2
+          reading; absolute TjMax isn't architectural there), taped
+          like every vital, absent-by-design under QEMU, lights up on
+          real silicon. Text-fallback gate re-run END-TO-END: the full
+          M10-M12 ladder is green on a `-vga none` boot (gfx = the
+          documented skip) — the GM45-declines-the-mode path is
+          covered. docs/T3200-BOOT-DAY.md: the one-page M7 runbook
+          (pre-flight, attempt ladder, the proof script, post-boot
+          discipline).
 - [ ] **M13 — networking (later).** A NIC driver + the HTTP extension
       freestanding. Deliberately last: biggest surface, lowest
       forcing-function novelty (the HTTP stack is already hardened

@@ -1,0 +1,53 @@
+# Hosted twin harness for EigenOS demos/spkr.eigs — port stubs record
+# the outb sequence and assert the PIT-ch2 programming and the 0x61
+# read-modify-write discipline (system bits must be preserved). Run
+# from the EigenOS repo root:
+#   eigenscript tools/spkr_twin_hosted.eigs
+
+writes is []
+p61 is 0x30                     # pre-existing system bits on port 0x61
+
+define outb(port, v) as:
+    append of [writes, [port, v]]
+    if port == 0x61:
+        p61 is v
+    return 1
+
+define inb(port) as:
+    return p61
+
+define gfx_delay(ms) as:
+    return 1
+
+load_file of "demos/spkr.eigs"
+
+fails is 0
+define check(tag, got, want) as:
+    if got == want:
+        print of f"  PASS: {tag}"
+    if got != want:
+        print of f"  FAIL: {tag} (got {str of got}, want {str of want})"
+        fails is fails + 1
+
+print of "=== spkr.eigs twin (PIT ch2 + gate discipline) ==="
+
+on of 440
+check of ["ch2 command byte", writes[0][1], 0xB6]
+check of ["command port", writes[0][0], 0x43]
+check of ["divisor lo (440Hz -> 2711)", writes[1][1], 151]
+check of ["divisor hi", writes[2][1], 10]
+check of ["gate sets bits 0-1, preserves system bits", writes[3][1], 0x33]
+check of ["gate port", writes[3][0], 0x61]
+
+off of []
+check of ["off clears ONLY bits 0-1", writes[4][1], 0x30]
+
+writes is []
+check of ["sub-audible freq refused", on of 5, 0]
+check of ["refusal writes nothing", len of writes, 0]
+
+if fails == 0:
+    print of "SPKR_TWIN_ALL_PASS"
+if fails > 0:
+    print of f"{str of fails} FAILURES"
+    throw of "spkr twin failed"
