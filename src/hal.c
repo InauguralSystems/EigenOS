@@ -24,6 +24,7 @@
 #include "fb.h"
 #include "mouse.h"
 #include "ata.h"
+#include "io.h"
 #include "eigs_embed.h"        /* from EigenScript/src, via -I in the Makefile */
 
 /* Console fan-out: serial always (headless log); VGA once the REPL owns
@@ -524,6 +525,58 @@ static void register_blk(void) {
     eigs_register_function("blk_write",   b_blk_write);
     eigs_register_function("blk_unlock",  b_blk_unlock);
     eigs_register_function("blk_flush",   b_blk_flush);
+}
+
+/* ---- M12: raw port I/O — devices become script territory ----
+ * Mechanism only: in{b,w,l} read a port, out{b,w,l} write one; POLICY
+ * lives in .eigs drivers (demos/pci.eigs is the first). Out-of-range
+ * ports/values are REFUSED (null / 0), never silently truncated. The
+ * one kernel-side refusal beyond that mirrors M10's write lock: the
+ * ATA register blocks stay closed to out* until blk_unlock — a raw
+ * port write must not be a bypass around the disk-write lock. */
+static int port_is_ata(unsigned p) {
+    return (p >= 0x1F0 && p <= 0x1F7) || p == 0x3F6 ||   /* primary   */
+           (p >= 0x170 && p <= 0x177) || p == 0x376;     /* secondary */
+}
+
+static EigsValue *b_in_common(EigsValue *a, int width) { /* port -> num|null */
+    if (!a || eigs_value_type(a) != EIGS_TYPE_NUM) return eigs_value_new_null();
+    double p = eigs_value_as_num(a);
+    if (p < 0 || p > 65535) return eigs_value_new_null();
+    uint32_t v = width == 1 ? inb((uint16_t)p)
+               : width == 2 ? inw((uint16_t)p)
+                            : inl((uint16_t)p);
+    return eigs_value_new_num((double)v);
+}
+static EigsValue *b_inb(EigsValue *a) { return b_in_common(a, 1); }
+static EigsValue *b_inw(EigsValue *a) { return b_in_common(a, 2); }
+static EigsValue *b_inl(EigsValue *a) { return b_in_common(a, 4); }
+
+static EigsValue *b_out_common(EigsValue *a, int width) { /* [port,val] -> 1|0 */
+    if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
+    double p = list_num(a, 0), v = list_num(a, 1);
+    double vmax = width == 1 ? 255.0 : width == 2 ? 65535.0 : 4294967295.0;
+    if (p < 0 || p > 65535 || v < 0 || v > vmax) return eigs_value_new_num(0);
+    if (!g_blk_unlocked && port_is_ata((unsigned)p)) {
+        serial_write("[m12] out refused: ATA ports locked (blk_unlock first)\n");
+        return eigs_value_new_num(0);
+    }
+    if      (width == 1) outb((uint16_t)p, (uint8_t)v);
+    else if (width == 2) outw((uint16_t)p, (uint16_t)v);
+    else                 outl((uint16_t)p, (uint32_t)v);
+    return eigs_value_new_num(1);
+}
+static EigsValue *b_outb(EigsValue *a) { return b_out_common(a, 1); }
+static EigsValue *b_outw(EigsValue *a) { return b_out_common(a, 2); }
+static EigsValue *b_outl(EigsValue *a) { return b_out_common(a, 4); }
+
+static void register_ports(void) {
+    eigs_register_function("inb",  b_inb);
+    eigs_register_function("inw",  b_inw);
+    eigs_register_function("inl",  b_inl);
+    eigs_register_function("outb", b_outb);
+    eigs_register_function("outw", b_outw);
+    eigs_register_function("outl", b_outl);
 }
 
 /* ---- M10: the fs surface, un-carved ----
@@ -1563,6 +1616,8 @@ int eigs_run_demo(void) {
     serial_write("[m9] task builtins registered (spawn/step/read/alive/kill)\n");
     register_blk();
     serial_write("[m10] block builtins registered (blk_read/write locked)\n");
+    register_ports();
+    serial_write("[m12] port builtins registered (in/out 8/16/32)\n");
 
     /* M10: the fs daemon state — a dedicated EigsState running the
      * byte-unmodified regionfs module; the un-carved fs builtins
@@ -1776,6 +1831,27 @@ int eigs_run_demo(void) {
                              : "[m10] fs: no disk\n");
         }
     }
+
+    /* M12 phase 1: the script touches hardware directly — a PCI config
+     * probe through ports 0xCF8/0xCFC. Every machine this OS targets
+     * (QEMU i440FX/Q35, the T3200's GM45) has an Intel host bridge at
+     * 0:0.0, so vendor == 0x8086 is a deterministic verdict. */
+    EigsValue *v9 = eigs_eval_string(
+        "outl of [0xCF8, 0x80000000]\n"
+        "(inl of 0xCFC) % 0x10000");
+    int port_ok = v9 && eigs_value_type(v9) == EIGS_TYPE_NUM &&
+                  (int)eigs_value_as_num(v9) == 0x8086;
+    if (v9) eigs_value_release(v9);
+    if (eigs_has_error()) {
+        port_ok = 0;
+        serial_write("[m12] probe error: ");
+        serial_write(eigs_last_error_message());
+        serial_write("\n");
+        eigs_clear_error();
+    }
+    serial_write(port_ok ? "[m12] port io: pci 0:0.0 vendor=0x8086 (script outl/inl) OK\n"
+                         : "[m12] port io: pci vendor probe FAILED\n");
+    if (!port_ok) return 0;
 
     if (!stack_canary_ok()) {
         serial_write("[mn] PANIC: boot-stack canary trampled during demo\n");

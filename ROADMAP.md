@@ -635,6 +635,28 @@ upstream, never worked around.
       EigenScript and swap it in. The newest axis the portfolio has never
       touched — likely the richest untapped gap-finder (bytes, volatile,
       FFI, IRQ-safe callbacks).
+    - [x] **Phase 1 — raw port I/O (DONE 2026-07-03).** `in{b,w,l}` /
+          `out{b,w,l}` builtins in hal.c: mechanism only, out-of-range
+          ports/values refused (never truncated), and the ATA register
+          blocks closed to `out*` until `blk_unlock` — raw ports must
+          not bypass M10's disk-write lock. `demos/pci.eigs` is the
+          first script to touch hardware registers: config mechanism #1
+          in pure EigenScript (`cfg_read`/`vendor`/`class_of`/`scan`);
+          at the REPL it enumerated the machine — host bridge, PIIX3,
+          VGA, and the e1000 as class 0002, the M13 target already
+          visible from script. Boot self-test: `outl of [0xCF8,
+          0x80000000]` + `inl of 0xCFC` reads vendor 0x8086 (i440FX/Q35
+          and the T3200's GM45 all have an Intel host bridge at 0:0.0).
+          FORCING YIELD (the milestone paid out on day one): hex
+          literals only parsed via glibc strtod's C99 hex-float
+          acceptance — hosted worked, freestanding lexed `0xFF` as `0`
+          + identifier `xFF`. Fixed at the root (EigenScript #378): hex
+          integers are lexed explicitly on every profile, hex-FLOAT
+          forms (`0x1p4`) are loud parse errors, suite [50b] pins it.
+          Next: the IRQ seam (`irq_claim`/`irq_read` — raw bytes divert
+          to a per-IRQ ring the language drains; IRQ context stays pure
+          C per the SSE invariant), then kbd.eigs swapped in as the
+          proof.
 - [ ] **M13 — networking (later).** A NIC driver + the HTTP extension
       freestanding. Deliberately last: biggest surface, lowest
       forcing-function novelty (the HTTP stack is already hardened

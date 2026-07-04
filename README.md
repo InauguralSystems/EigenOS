@@ -27,6 +27,19 @@ Developed and tested under QEMU first.
 
 ## Status
 
+**Milestone-12 (in progress): devices in EigenScript.** Phase 1 (done):
+raw port I/O — `in{b,w,l}`/`out{b,w,l}` builtins (mechanism only;
+out-of-range refused, ATA register blocks closed to `out*` until
+`blk_unlock` so raw ports can't bypass the disk-write lock), and
+`demos/pci.eigs`, the first script that touches hardware registers:
+`import pci` + `pci.scan of []` at the REPL enumerates the bus via
+config mechanism #1 in pure EigenScript. On-boot self-test reads the
+host-bridge vendor (0x8086) from script. Forcing yield on day one: hex
+literals only parsed by accident of glibc strtod — fixed at the root
+(EigenScript #378, explicit hex-integer lexing on every profile). Next:
+the IRQ-claim seam, then the PS/2 keyboard driver rewritten in
+EigenScript and swapped in.
+
 **Milestone-9.5 (done): pixels and a pointer.** The Multiboot2 header
 requests a 1024x768x32 linear framebuffer (optional — GRUB boots us
 either way); the console is now a cell **grid** (`src/vga.c`) rendered by
