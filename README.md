@@ -36,9 +36,15 @@ out-of-range refused, ATA register blocks closed to `out*` until
 config mechanism #1 in pure EigenScript. On-boot self-test reads the
 host-bridge vendor (0x8086) from script. Forcing yield on day one: hex
 literals only parsed by accident of glibc strtod — fixed at the root
-(EigenScript #378, explicit hex-integer lexing on every profile). Next:
-the IRQ-claim seam, then the PS/2 keyboard driver rewritten in
-EigenScript and swapped in.
+(EigenScript #378, explicit hex-integer lexing on every profile).
+Phase 2 (done): the IRQ-claim seam — `irq_claim/irq_read/irq_release`
+divert a claimed IRQ's raw bytes (IRQ1 scancodes / IRQ12 aux) into a
+per-IRQ ring the script drains cooperatively; IRQ context stays pure C.
+Input can't die from script: release falls back to the C driver, eval
+errors force-release, and the REPL's key-wait un-claims IRQ1 loudly.
+`irqecho.echo of 0x2A` loops a scancode through the 8042 output buffer
+and back through the claim ring: 42 at the REPL. Next: the PS/2
+keyboard driver rewritten in EigenScript and swapped in.
 
 **Milestone-9.5 (done): pixels and a pointer.** The Multiboot2 header
 requests a 1024x768x32 linear framebuffer (optional — GRUB boots us

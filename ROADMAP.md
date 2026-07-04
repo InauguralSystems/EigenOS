@@ -657,6 +657,27 @@ upstream, never worked around.
           to a per-IRQ ring the language drains; IRQ context stays pure
           C per the SSE invariant), then kbd.eigs swapped in as the
           proof.
+    - [x] **Phase 2 — the IRQ-claim seam (DONE 2026-07-03).**
+          `irq_claim/irq_read/irq_release/irq_dropped` over per-IRQ
+          rings (`src/irqhook.c`, kernel-flags): a claimed IRQ's raw
+          bytes divert BEFORE the C driver's translation (IRQ1 = raw
+          scancodes, E0 prefixes and all; IRQ12 = raw aux bytes, both
+          divert points 8042-aware), and the script drains the ring
+          cooperatively — a driver's "interrupt callback" is the drain,
+          so IRQ context never touches the runtime (the SSE invariant
+          holds; XMM audit clean on irqhook/keyboard/mouse). irq_read /
+          irq_dropped take the M11 tape like vitals. Input cannot die
+          from script: releasing a claim falls back to the C driver,
+          eval errors force-release all claims, and the REPL's key-wait
+          is the claimant of last resort (a bare `irq_claim of 1` at
+          the prompt heals itself, loudly — proven under sendkey).
+          Self-test + demo (`demos/irqecho.eigs`): the 8042 output-
+          buffer loopback (command 0xD2) — the script injects a
+          scancode through the controller and receives it back through
+          its own claim ring; `irqecho.echo of 0x2A` reads 42 at the
+          REPL. Next: kbd.eigs — the set-1 state machine in EigenScript
+          feeding translated input back, stepped by the REPL wait
+          loop's driver pump.
 - [ ] **M13 — networking (later).** A NIC driver + the HTTP extension
       freestanding. Deliberately last: biggest surface, lowest
       forcing-function novelty (the HTTP stack is already hardened

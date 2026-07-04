@@ -7,6 +7,7 @@
  * byte3. A plain device (ID 0 — likely the T3200 touchpad) just stays
  * on 3-byte packets. */
 #include "mouse.h"
+#include "irqhook.h"
 #include "io.h"
 
 #define PS2_DATA   0x60
@@ -154,8 +155,11 @@ void mouse_byte(uint8_t b) {
 
 void mouse_irq(void) {
     /* Drain everything aux-flagged; leave keyboard bytes for IRQ1. */
-    while ((inb(PS2_STATUS) & (ST_OBF | ST_AUX)) == (ST_OBF | ST_AUX))
-        mouse_byte(inb(PS2_DATA));
+    while ((inb(PS2_STATUS) & (ST_OBF | ST_AUX)) == (ST_OBF | ST_AUX)) {
+        uint8_t b = inb(PS2_DATA);
+        if (irq_hook_claimed(12)) irq_hook_push(12, b);   /* M12: raw divert */
+        else mouse_byte(b);
+    }
 }
 
 int mouse_next_packet(int *x, int *y, int *buttons, int *moved, int *wheel) {

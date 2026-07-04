@@ -7,6 +7,7 @@
  * delete, pgup/pgdn) map to KEY_* codes above the ASCII range. */
 #include "keyboard.h"
 #include "mouse.h"
+#include "irqhook.h"
 #include "io.h"
 #include <stdint.h>
 
@@ -97,8 +98,17 @@ static void ering_push(int code, int down) {
 void kbd_irq(void) {
     /* One 8042 serves both devices: if the pending byte is aux-flagged
      * it is mouse traffic that raced onto IRQ1 — route it (M9.5). */
-    if (inb(KBD_STATUS) & ST_AUX) { mouse_byte(inb(KBD_DATA)); return; }
+    if (inb(KBD_STATUS) & ST_AUX) {
+        uint8_t ab = inb(KBD_DATA);
+        if (irq_hook_claimed(12)) irq_hook_push(12, ab);
+        else mouse_byte(ab);
+        return;
+    }
     uint8_t sc = inb(KBD_DATA);
+
+    /* M12: a claim diverts the RAW stream (E0 prefixes and all) before
+     * any translation — the .eigs driver owns the state machine. */
+    if (irq_hook_claimed(1)) { irq_hook_push(1, sc); return; }
 
     if (sc == 0xE0) { g_e0 = 1; return; }
     int e0 = g_e0;

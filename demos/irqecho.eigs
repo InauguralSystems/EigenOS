@@ -1,0 +1,32 @@
+# The IRQ-claim seam, closed-loop (M12 phase 2). Claim the keyboard
+# IRQ, ask the 8042 to loop a byte back through its output buffer
+# (command 0xD2: the next data byte reappears as if the keyboard sent
+# it, raising IRQ1), drain it from the claim ring, release. What comes
+# back is a raw scancode delivered exactly the way a .eigs keyboard
+# driver will receive its input — no C translation involved.
+#
+#   import irqecho
+#   irqecho.echo of 0x2A     # -> 42 (left-shift's make code, looped back)
+#   irqecho.probe of []      # -> 1 if the seam is healthy
+#
+# While IRQ1 is claimed the console keyboard is diverted here, so echo
+# always releases before returning (and any eval error force-releases).
+
+define echo(b) as:
+    local ok is irq_claim of 1
+    if ok == 0:
+        return -1
+    outb of [0x64, 0xD2]
+    outb of [0x60, b]
+    local sc is -1
+    local i is 0
+    loop while (sc < 0) and (i < 200):
+        gfx_delay of 1
+        sc is irq_read of 1
+        i is i + 1
+    irq_release of 1
+    return sc
+
+define probe() as:
+    local want is 0x2A
+    return (echo of (want)) == want

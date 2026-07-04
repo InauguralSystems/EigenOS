@@ -39,7 +39,7 @@ OBJS   := build/boot.o build/kernel.o build/pmm.o build/serial.o \
           build/idt.o build/isr.o build/paging.o build/pic.o \
           build/timer.o build/keyboard.o build/kheap.o build/vga.o \
           build/fb.o build/mouse.o build/crashlog.o build/ata.o \
-          build/bundle.o
+          build/irqhook.o build/bundle.o
 
 # The ROM bundle (M7.5): the EigenScript stdlib + demos/ baked into the
 # image, served via the eigs_set_source_provider seam — `import` on bare
@@ -93,10 +93,13 @@ build/pic.o: src/pic.c src/pic.h src/io.h | build
 build/timer.o: src/timer.c src/timer.h src/io.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
-build/keyboard.o: src/keyboard.c src/keyboard.h src/mouse.h src/io.h | build
+build/keyboard.o: src/keyboard.c src/keyboard.h src/mouse.h src/irqhook.h src/io.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
-build/mouse.o: src/mouse.c src/mouse.h src/io.h | build
+build/mouse.o: src/mouse.c src/mouse.h src/irqhook.h src/io.h | build
+	$(CC) $(CFLAGS) $< -o $@
+
+build/irqhook.o: src/irqhook.c src/irqhook.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/ata.o: src/ata.c src/ata.h src/io.h | build
@@ -136,7 +139,7 @@ build/eigsfs_%.o: $(EIGS)/src/freestanding/%.c | build
 
 # The HAL glue: runtime cflags (SSE) so variadic FP + the double return
 # from eigs_value_as_num are handled; -Isrc for the kernel headers.
-build/hal.o: src/hal.c src/kheap.h src/serial.h src/timer.h src/keyboard.h src/vga.h src/fb.h src/mouse.h src/ata.h src/stackguard.h | build
+build/hal.o: src/hal.c src/kheap.h src/serial.h src/timer.h src/keyboard.h src/vga.h src/fb.h src/mouse.h src/ata.h src/irqhook.h src/io.h src/stackguard.h | build
 	$(CC) $(RT_CFLAGS) -Isrc $< -o $@
 
 $(KERNEL): $(OBJS) $(EIGS_OBJS) linker.ld
