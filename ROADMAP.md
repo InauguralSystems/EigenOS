@@ -704,6 +704,26 @@ upstream, never worked around.
           were all typed THROUGH the EigenScript driver (42, 20, clean
           fallback to C after release). The machine's keyboard is now
           software it can read.
+    - [x] **Addendum — ctrl-c is the BREAK key (DONE 2026-07-04;
+          upstream #379).** A runaway `loop while 1:` used to own the
+          machine (the 100M loop cap is hours under TCG). Upstream
+          grew an async abort seam (`eigs_set_abort_flag` — the VM
+          polls an embedder flag at every loop back-edge and raises a
+          catchable `aborted` error, consuming the flag; ~1%
+          interpreter cost, noise with JIT; freestanding = total
+          coverage since the JIT is compiled out). EigenOS wires
+          ctrl-c to it in EVERY input mode and on BOTH driver paths:
+          the C translator sets `g_kbd_break`, and a minimal
+          raw-scancode tracker in the claimed-IRQ1 path keeps rescue
+          working when a .eigs driver owns (or has wedged) the
+          keyboard — during the hung eval the pump never runs, so the
+          raw tracker IS the rescuer, and the eval-error recovery then
+          falls back to the C driver. The flag registers ONLY around
+          user evals (a ctrl-c at the idle prompt must not abort the
+          driver task translating it). Proven: boot self-test loops a
+          real ctrl-c through the 8042 then aborts a runaway loop;
+          live under sendkey, `loop while 1:` + ctrl-c → `aborted` →
+          prompt returns → 42, on the C driver AND through kbd.eigs.
 - [ ] **M13 — networking (later).** A NIC driver + the HTTP extension
       freestanding. Deliberately last: biggest surface, lowest
       forcing-function novelty (the HTTP stack is already hardened

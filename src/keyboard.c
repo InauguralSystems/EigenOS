@@ -28,6 +28,9 @@ static int g_mods;               /* KMOD_* bitmask */
 static int g_e0;                 /* saw an 0xE0 prefix byte */
 static int g_gfx;                /* events mode (gfx app owns input) */
 
+volatile int g_kbd_break;        /* ctrl-c seen (see keyboard.h) */
+static int g_brk_ctrl;           /* raw tracker: ctrl held (claimed path) */
+
 static const char kmap[128] = {
     [0x01]=27,                   /* ESC */
     [0x02]='1',[0x03]='2',[0x04]='3',[0x05]='4',[0x06]='5',
@@ -69,6 +72,7 @@ static const unsigned char kmap_e0[128] = {
 void keyboard_init(void) {
     g_head = g_tail = g_ehead = g_etail = 0;
     g_mods = g_e0 = g_gfx = 0;
+    g_kbd_break = g_brk_ctrl = 0;
 }
 
 void kbd_gfx_mode(int on) {
@@ -103,6 +107,7 @@ static void ering_push(int code, int down) { ering_push_m(code, down, g_mods); }
 void kbd_inject(int code, int down, int mods) {
     g_mods = mods & 0xFF;
     if (code <= 0) return;
+    if (down && code == 'c' && (mods & KMOD_CTRL)) g_kbd_break = 1;
     if (g_gfx) ering_push_m(code, down, mods);
     else if (down) ring_push((char)code);
 }
@@ -119,8 +124,16 @@ void kbd_irq(void) {
     uint8_t sc = inb(KBD_DATA);
 
     /* M12: a claim diverts the RAW stream (E0 prefixes and all) before
-     * any translation — the .eigs driver owns the state machine. */
-    if (irq_hook_claimed(1)) { irq_hook_push(1, sc); return; }
+     * any translation — the .eigs driver owns the state machine. A
+     * minimal raw tracker keeps the BREAK key working underneath it:
+     * rescue must not depend on the driver being healthy. */
+    if (irq_hook_claimed(1)) {
+        if (sc == 0x1D) g_brk_ctrl = 1;
+        else if (sc == 0x9D) g_brk_ctrl = 0;
+        else if (sc == 0x2E && g_brk_ctrl) g_kbd_break = 1;
+        irq_hook_push(1, sc);
+        return;
+    }
 
     if (sc == 0xE0) { g_e0 = 1; return; }
     int e0 = g_e0;
@@ -149,6 +162,12 @@ void kbd_irq(void) {
         if ((g_mods & KMOD_SHIFT) && c >= 'a' && c <= 'z') c -= 32;
     }
     if (!c) return;
+
+    /* Ctrl-c raises the break flag in EVERY mode (rescue trumps app
+     * keys — a hung eval never polls its event ring). The char still
+     * flows to its ring: between evals the line editor's own ctrl-c
+     * handling consumes it as line-cancel. */
+    if (down && c == 'c' && (g_mods & KMOD_CTRL)) g_kbd_break = 1;
 
     if (g_gfx) ering_push(c, down);                   /* down AND up */
     else if (down) ring_push((char)c);

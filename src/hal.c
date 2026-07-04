@@ -2013,6 +2013,37 @@ int eigs_run_demo(void) {
                         : "[m12] kbd.eigs driver probe FAILED\n");
     if (!kbd_ok) return 0;
 
+    /* Ctrl-c break: loop a real ctrl-c through the 8042 (the IRQ path
+     * sets g_kbd_break exactly as a typed one would), then run an
+     * unbounded loop with the abort flag registered — it must die with
+     * an `aborted` error, not own the machine. The REPL registers the
+     * same flag around every user eval. */
+    g_kbd_break = 0;
+    eigs_set_abort_flag(&g_kbd_break);
+    EigsValue *v13 = eigs_eval_string(
+        "define lb2(b) as:\n"
+        "    outb of [0x64, 0xD2]\n"
+        "    outb of [0x60, b]\n"
+        "    gfx_delay of 1\n"
+        "lb2 of (0x1D)\n"
+        "lb2 of (0x2E)\n"
+        "lb2 of (0xAE)\n"
+        "lb2 of (0x9D)\n"
+        "i is 0\n"
+        "loop while 1:\n"
+        "    i is i + 1\n"
+        "i");
+    int brk_ok = (v13 == 0) && eigs_has_error() &&
+                 strstr(eigs_last_error_message(), "aborted") != 0;
+    if (v13) eigs_value_release(v13);
+    eigs_clear_error();
+    eigs_set_abort_flag(0);
+    g_kbd_break = 0;
+    while (kbd_getchar() >= 0) { }     /* drop the looped-back 'c' */
+    serial_write(brk_ok ? "[m12] break: ctrl-c via 8042 loopback aborts a runaway loop OK\n"
+                        : "[m12] break: runaway-loop abort FAILED\n");
+    if (!brk_ok) return 0;
+
     if (!stack_canary_ok()) {
         serial_write("[mn] PANIC: boot-stack canary trampled during demo\n");
         vga_put_at(19, 0, "MN: STACK CANARY TRAMPLED", 0x4F);
@@ -2063,7 +2094,15 @@ static void repl_eval(const char *src) {
     int jmeta = strncmp(src, "journal_", 8) == 0;
     if (jmeta && g_auto_on && !g_jrn_on) eigs_set_trace_sink(0, 0);
     jrn_record_input(src);        /* M11: the session journal's I record */
+    /* Ctrl-c break: registered ONLY around user evals. A stale press
+     * from the prompt must not kill this eval (clear first), and the
+     * kbd-driver pump's task steps must run un-abortable — a ctrl-c
+     * arriving at an idle prompt would otherwise abort the driver task
+     * translating it. */
+    g_kbd_break = 0;
+    eigs_set_abort_flag(&g_kbd_break);
     EigsValue *v = eigs_eval_string(src);
+    eigs_set_abort_flag(0);
     /* If the eval died with gfx holding the screen, take it back — an
      * error message must never render invisibly (the T3200 has no
      * serial to read it from). A CLEAN eval leaves gfx open on

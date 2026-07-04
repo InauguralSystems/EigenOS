@@ -41,4 +41,14 @@ int  kbd_mods(void);        /* live modifier state (KMOD_*) */
  * downstream consumers never know which produced the key. */
 void kbd_inject(int code, int down, int mods);
 
+/* Ctrl-c is the machine's BREAK key, reserved in every input mode: the
+ * IRQ handler raises this flag (a plain store — IRQ context never
+ * touches the runtime), and the REPL hands its address to the VM via
+ * eigs_set_abort_flag around each user eval, so a runaway loop dies
+ * with an `aborted` error instead of owning the machine. Detection
+ * works on BOTH paths — the C translator and a raw-scancode tracker in
+ * the claimed-IRQ1 path — so break still works when a wedged .eigs
+ * driver owns the keyboard (exactly when it's needed most). */
+extern volatile int g_kbd_break;
+
 #endif /* EIGENOS_KEYBOARD_H */

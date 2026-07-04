@@ -45,7 +45,13 @@ itself were typed *through* the EigenScript driver. Twin gate:
 `tools/kbd_twin_hosted.eigs` (22 checks) — run before touching
 kbd.eigs. Forcing yield: hex literals parsed only by accident of glibc
 strtod — fixed at the root (EigenScript #378). MMIO/volatile defers to
-the first real MMIO device (the M13 NIC).
+the first real MMIO device (the M13 NIC). Addendum: **ctrl-c is the
+BREAK key** (upstream #379, the async abort seam): a runaway
+`loop while 1:` dies with an `aborted` error and the prompt returns —
+in every input mode, on both keyboard drivers (a raw-scancode tracker
+under the claim seam keeps rescue alive even when a wedged .eigs
+driver owns the keyboard). The machine can no longer be bricked from
+its own REPL.
 
 **Milestone-9.5 (done): pixels and a pointer.** The Multiboot2 header
 requests a 1024x768x32 linear framebuffer (optional — GRUB boots us
