@@ -21,15 +21,11 @@ define gfx_delay(ms) as:
 
 load_file of "demos/spkr.eigs"
 
-fails is 0
+# scaffolding from lib/harness.eigs (the twin-gate pattern, upstreamed)
+import harness
+harness.start of "SPKR_TWIN"
 define check(tag, got, want) as:
-    if got == want:
-        print of f"  PASS: {tag}"
-    if got != want:
-        print of f"  FAIL: {tag} (got {str of got}, want {str of want})"
-        fails is fails + 1
-
-print of "=== spkr.eigs twin (PIT ch2 + gate discipline) ==="
+    harness.check of [tag, got, want]
 
 on of 440
 check of ["ch2 command byte", writes[0][1], 0xB6]
@@ -46,8 +42,4 @@ writes is []
 check of ["sub-audible freq refused", on of 5, 0]
 check of ["refusal writes nothing", len of writes, 0]
 
-if fails == 0:
-    print of "SPKR_TWIN_ALL_PASS"
-if fails > 0:
-    print of f"{str of fails} FAILURES"
-    throw of "spkr twin failed"
+harness.finish of []
