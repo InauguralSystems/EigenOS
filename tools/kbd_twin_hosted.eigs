@@ -1,0 +1,121 @@
+# Hosted twin harness for EigenOS demos/kbd.eigs (the .eigs PS/2
+# keyboard driver). Stubs the two kernel seams (irq_read source,
+# kbd_inject sink) in pure EigenScript, feeds raw scancode set-1 tapes,
+# and asserts every translated [code, down, mods] triple — the same
+# sequences the C translator handles, so the two drivers are twins by
+# construction. Run from the EigenOS repo root:
+#   eigenscript tools/kbd_twin_hosted.eigs
+# Exits nonzero on any failure — run before touching demos/kbd.eigs.
+
+feed is []
+fi is 0
+out is []
+
+define irq_read(irq) as:
+    if fi >= (len of feed):
+        return -1
+    local b is feed[fi]
+    fi is fi + 1
+    return b
+
+define kbd_inject(c, d, m) as:
+    append of [out, [c, d, m]]
+    return 1
+
+load_file of "demos/kbd.eigs"
+
+fails is 0
+
+define run_tape(tape) as:
+    feed is tape
+    fi is 0
+    out is []
+    step of []
+
+define expect(tag, i, c, d, m) as:
+    local bad is 0
+    if i >= (len of out):
+        bad is 1
+    if bad == 0:
+        local t is out[i]
+        if (t[0] != c) or (t[1] != d) or (t[2] != m):
+            bad is 1
+    if bad == 1:
+        print of f"  FAIL: {tag} (event {str of i}: wanted [{str of c},{str of d},{str of m}])"
+        fails is fails + 1
+    if bad == 0:
+        print of f"  PASS: {tag}"
+
+define expect_count(tag, n) as:
+    if (len of out) != n:
+        print of f"  FAIL: {tag} (got {str of (len of out)} events, wanted {str of n})"
+        fails is fails + 1
+    if (len of out) == n:
+        print of f"  PASS: {tag}"
+
+print of "=== kbd.eigs twin (scancode set-1 vs the C translator) ==="
+
+# plain letter, make + break
+run_tape of ([0x1E, 0x9E])
+expect of ["a down", 0, 97, 1, 0]
+expect of ["a up", 1, 97, 0, 0]
+expect_count of ["letter emits down+up only", 2]
+
+# shifted letter: uppercase while shift held, no events for shift itself
+run_tape of ([0x2A, 0x1E, 0x9E, 0xAA])
+expect of ["shift-a down is A", 0, 65, 1, 1]
+expect of ["shift-a up", 1, 65, 0, 1]
+expect_count of ["modifiers inject nothing", 2]
+
+# shifted symbol row: 8 -> *
+run_tape of ([0x2A, 0x09, 0x89, 0xAA])
+expect of ["shift-8 is *", 0, 42, 1, 1]
+
+# shifted brackets -> braces
+run_tape of ([0x2A, 0x1A, 0x9A, 0xAA])
+expect of ["shift-[ is {", 0, 123, 1, 1]
+
+# ctrl modifier rides the mods field, char stays lowercase
+run_tape of ([0x1D, 0x1E, 0x9E, 0x9D])
+expect of ["ctrl-a keeps a", 0, 97, 1, 2]
+expect of ["ctrl-a up", 1, 97, 0, 2]
+
+# E0 extended: up arrow -> KEY_UP (0x80), make + break
+run_tape of ([0xE0, 0x48, 0xE0, 0xC8])
+expect of ["E0 up-arrow down", 0, 0x80, 1, 0]
+expect of ["E0 up-arrow up", 1, 0x80, 0, 0]
+
+# fake shift around an extended key must NOT flip real shift state
+run_tape of ([0xE0, 0x2A, 0xE0, 0x48, 0xE0, 0xC8, 0xE0, 0xAA, 0x1E, 0x9E])
+expect of ["fake-shifted arrow down", 0, 0x80, 1, 0]
+expect of ["fake-shifted arrow up", 1, 0x80, 0, 0]
+expect of ["a after fake shift stays lowercase", 2, 97, 1, 0]
+expect_count of ["fake shift injects nothing extra", 4]
+
+# keypad enter (E0 1C) is newline
+run_tape of ([0xE0, 0x1C, 0xE0, 0x9C])
+expect of ["keypad enter is newline", 0, 10, 1, 0]
+
+# unmapped scancode is silent
+run_tape of ([0x5B, 0xDB])
+expect_count of ["unmapped scancode injects nothing", 0]
+
+# enter, space, backspace land as codes the editor expects
+run_tape of ([0x1C, 0x9C, 0x39, 0xB9, 0x0E, 0x8E])
+expect of ["enter", 0, 10, 1, 0]
+expect of ["space", 2, 32, 1, 0]
+expect of ["backspace", 4, 8, 1, 0]
+
+# progress counts translated keys, not raw bytes
+run_tape of ([0x2A, 0x1E, 0x9E, 0xAA])
+if progress > 0:
+    print of "  PASS: progress advances on translated keys"
+if progress == 0:
+    print of "  FAIL: progress never advanced"
+    fails is fails + 1
+
+if fails == 0:
+    print of "KBD_TWIN_ALL_PASS"
+if fails > 0:
+    print of f"{str of fails} FAILURES"
+    throw of "kbd twin failed"

@@ -378,9 +378,8 @@ static int task_id_of(EigsValue *v) {
     return id;
 }
 
-static EigsValue *b_task_step(EigsValue *arg) {
-    int id = task_id_of(arg);
-    if (id < 0) return eigs_value_new_num(-1);
+static double task_step_id(int id) {            /* shared: builtin + kbd pump */
+    if (id < 0 || id >= MAX_TASKS || !g_tasks[id].alive) return -1;
     eigs_thread_switch(g_tasks[id].st);
     g_active_task = id;                         /* gfx lands in its viewport */
     EigsValue *r = eigs_eval_string("step of []");
@@ -391,8 +390,14 @@ static EigsValue *b_task_step(EigsValue *arg) {
     int failed = eigs_has_error();
     if (failed) eigs_clear_error();
     eigs_thread_switch(g_primary);
-    if (failed) { g_tasks[id].alive = 0; return eigs_value_new_num(-1); }
-    return eigs_value_new_num(out);
+    if (failed) { g_tasks[id].alive = 0; return -1; }
+    return out;
+}
+
+static EigsValue *b_task_step(EigsValue *arg) {
+    int id = task_id_of(arg);
+    if (id < 0) return eigs_value_new_num(-1);
+    return eigs_value_new_num(task_step_id(id));
 }
 
 static EigsValue *b_task_read(EigsValue *arg) {  /* [id, "name"] -> num */
@@ -613,11 +618,43 @@ static EigsValue *b_irq_dropped(EigsValue *a) {  /* irq -> lost-byte count */
     return vital_nondet("irq_dropped", (double)irq_hook_dropped(irq));
 }
 
+/* ---- M12 phase 3: the .eigs keyboard driver's seams ----
+ * kbd_inject pushes a TRANSLATED key back into the kernel's two input
+ * rings (the same rings the C translator feeds — downstream consumers
+ * can't tell which driver produced a key). kbd_driver registers a task
+ * as THE keyboard driver: while IRQ1 is claimed, the REPL's key-wait
+ * pumps that task instead of healing the claim away, so typing at the
+ * prompt flows scancode -> claim ring -> .eigs state machine ->
+ * kbd_inject -> char ring -> line editor. kbd_take is the script's
+ * consuming window into the char ring (self-tests read what a driver
+ * injected; nondet, tape-participating). */
+static int g_kbd_driver = -1;                    /* task id, -1 = none */
+
+static EigsValue *b_kbd_inject(EigsValue *a) {   /* [code, down, mods] -> 1 */
+    if (!arg_list_min(a, 3)) return eigs_value_new_num(0);
+    kbd_inject((int)list_num(a, 0), (int)list_num(a, 1), (int)list_num(a, 2));
+    return eigs_value_new_num(1);
+}
+
+static EigsValue *b_kbd_take(EigsValue *a) {     /* -> char code | -1 */
+    (void)a;
+    return vital_nondet("kbd_take", (double)kbd_getchar());
+}
+
+static EigsValue *b_kbd_driver(EigsValue *a) {   /* tid -> 1; -1 unregisters */
+    int id = task_id_of(a);
+    g_kbd_driver = id;                           /* invalid/negative = none */
+    return eigs_value_new_num(id >= 0 ? 1 : 0);
+}
+
 static void register_irq(void) {
     eigs_register_function("irq_claim",   b_irq_claim);
     eigs_register_function("irq_release", b_irq_release);
     eigs_register_function("irq_read",    b_irq_read);
     eigs_register_function("irq_dropped", b_irq_dropped);
+    eigs_register_function("kbd_inject",  b_kbd_inject);
+    eigs_register_function("kbd_take",    b_kbd_take);
+    eigs_register_function("kbd_driver",  b_kbd_driver);
 }
 
 /* ---- M10: the fs surface, un-carved ----
@@ -1931,6 +1968,51 @@ int eigs_run_demo(void) {
                         : "[m12] irq seam: loopback probe FAILED\n");
     if (!irq_ok) return 0;
 
+    /* M12 phase 3: the .eigs keyboard driver, end to end on the
+     * production path — spawn demos/kbd.eigs as a driver task, claim
+     * IRQ1, loopback-inject the raw make/break sequence for shift-a
+     * then b, pump the driver, and read the TRANSLATED chars from the
+     * same ring the line editor drains: 'A' then 'b', then empty. The
+     * scancode state machine that produced them is EigenScript. */
+    EigsValue *v12 = eigs_eval_string(
+        "tid is task_spawn of \"kbd\"\n"
+        "kbd_driver of tid\n"
+        "ok is irq_claim of 1\n"
+        "define lb(b) as:\n"
+        "    outb of [0x64, 0xD2]\n"
+        "    outb of [0x60, b]\n"
+        "    gfx_delay of 1\n"
+        "lb of (0x2A)\n"
+        "lb of (0x1E)\n"
+        "lb of (0x9E)\n"
+        "lb of (0xAA)\n"
+        "lb of (0x30)\n"
+        "lb of (0xB0)\n"
+        "gfx_delay of 2\n"
+        "task_step of tid\n"
+        "c1 is kbd_take of []\n"
+        "c2 is kbd_take of []\n"
+        "c3 is kbd_take of []\n"
+        "irq_release of 1\n"
+        "kbd_driver of (-1)\n"
+        "task_kill of tid\n"
+        "(ok == 1) and (tid >= 0) and (c1 == 65) and (c2 == 98) and (c3 == -1)");
+    int kbd_ok = v12 && eigs_value_type(v12) == EIGS_TYPE_NUM &&
+                 (int)eigs_value_as_num(v12) == 1;
+    if (v12) eigs_value_release(v12);
+    if (eigs_has_error()) {
+        kbd_ok = 0;
+        serial_write("[m12] kbd driver probe error: ");
+        serial_write(eigs_last_error_message());
+        serial_write("\n");
+        eigs_clear_error();
+    }
+    g_kbd_driver = -1;
+    irq_hook_release_all();
+    serial_write(kbd_ok ? "[m12] kbd.eigs driver: shift-a + b -> 'A','b' via script state machine OK\n"
+                        : "[m12] kbd.eigs driver probe FAILED\n");
+    if (!kbd_ok) return 0;
+
     if (!stack_canary_ok()) {
         serial_write("[mn] PANIC: boot-stack canary trampled during demo\n");
         vga_put_at(19, 0, "MN: STACK CANARY TRAMPLED", 0x4F);
@@ -2111,16 +2193,34 @@ void eigs_repl(void) {
     for (;;) {
         int c = kbd_getchar();
         if (c < 0) {
-            /* M12: an eval that ENDED still holding the keyboard claim
-             * would divert every keystroke into a ring nobody drains —
-             * the prompt waits forever with no way to type the release.
-             * The console is the claimant of last resort: waiting for a
-             * key un-claims IRQ1, loudly. (Phase 3's driver pump will
-             * exempt a registered driver task and step it here instead.) */
+            /* M12: with IRQ1 claimed, raw scancodes divert to the claim
+             * ring — a registered driver task is pumped here to
+             * translate them back (scancode -> .eigs state machine ->
+             * kbd_inject -> this ring); pump only when bytes are
+             * pending, so an idle prompt costs no evals. Without a
+             * live driver the console is the claimant of last resort:
+             * it un-claims IRQ1, loudly — the prompt must never wait
+             * on a ring nobody drains. */
             if (irq_hook_claimed(1)) {
-                irq_hook_release(1);
-                con_write("\n[m12] IRQ1 claim released (console needs the keyboard)\n");
-                ed_prompt("eigs> ");
+                int drv = g_kbd_driver;
+                if (drv >= 0 && g_tasks[drv].alive) {
+                    if (irq_hook_pending(1)) {
+                        if (task_step_id(drv) < 0) {
+                            g_kbd_driver = -1;
+                            irq_hook_release_all();
+                            con_write("\n[m12] kbd driver step FAILED — claim released, C driver back\n");
+                            ed_prompt("eigs> ");
+                        } else {
+                            continue;    /* injected chars may be waiting */
+                        }
+                    }
+                    /* claimed but idle: sleep to the next IRQ below */
+                } else {
+                    g_kbd_driver = -1;
+                    irq_hook_release(1);
+                    con_write("\n[m12] IRQ1 claim released (console needs the keyboard)\n");
+                    ed_prompt("eigs> ");
+                }
             }
             vitals_sample_maybe();       /* M11: machine history, ~1 Hz */
             __asm__ volatile ("hlt");

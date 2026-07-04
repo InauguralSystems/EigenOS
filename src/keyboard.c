@@ -86,13 +86,25 @@ static void ring_push(char c) {
     g_head = next;
 }
 
-static void ering_push(int code, int down) {
+static void ering_push_m(int code, int down, int mods) {
     unsigned next = (g_ehead + 1) & (RING_SZ - 1);
     if (next == g_etail) return;
     g_ering[g_ehead] = (uint32_t)(code & 0xFF) |
                        ((uint32_t)(down & 1) << 8) |
-                       ((uint32_t)(g_mods & 0xFF) << 16);
+                       ((uint32_t)(mods & 0xFF) << 16);
     g_ehead = next;
+}
+static void ering_push(int code, int down) { ering_push_m(code, down, g_mods); }
+
+/* M12 phase 3: the script driver's push-back (see keyboard.h). The
+ * driver's modifier snapshot also becomes the LIVE kbd_mods() reading —
+ * with IRQ1 claimed the C translator never sees a shift/ctrl byte, and
+ * the line editor's ctrl-key handling reads kbd_mods() per char. */
+void kbd_inject(int code, int down, int mods) {
+    g_mods = mods & 0xFF;
+    if (code <= 0) return;
+    if (g_gfx) ering_push_m(code, down, mods);
+    else if (down) ring_push((char)code);
 }
 
 void kbd_irq(void) {

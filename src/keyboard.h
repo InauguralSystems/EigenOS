@@ -34,4 +34,11 @@ void kbd_gfx_mode(int on);  /* route input to the event stream (+flush) */
 int  kbd_next_event(int *code, int *down, int *mods);  /* 0 = empty */
 int  kbd_mods(void);        /* live modifier state (KMOD_*) */
 
+/* M12 phase 3: a .eigs keyboard driver's way back in — push a
+ * TRANSLATED key into whichever stream the mode flag says is live
+ * (char ring on down, or event ring with the driver's mods snapshot).
+ * The C translator and a script driver feed the same two rings; the
+ * downstream consumers never know which produced the key. */
+void kbd_inject(int code, int down, int mods);
+
 #endif /* EIGENOS_KEYBOARD_H */

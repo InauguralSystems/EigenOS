@@ -1,0 +1,110 @@
+# The PS/2 keyboard driver, in EigenScript (M12 phase 3 — the
+# milestone proof). Runs as a driver task: the kernel's IRQ1 handler
+# only banks raw bytes into the claim ring; THIS file is the driver —
+# the scancode set-1 state machine (0xE0 prefix, make/break, modifier
+# tracking, the shifted-symbol table) lives here, and translated keys
+# go back through kbd_inject into the same rings the C translator
+# feeds. Downstream (line editor, gfx_poll) can't tell who translated.
+#
+# Swap it in at the REPL (order matters — register before claiming):
+#   tid is task_spawn of "kbd"
+#   kbd_driver of tid
+#   irq_claim of 1
+# ...and every keystroke now flows through EigenScript. Back out:
+#   irq_release of 1
+# (or any eval error, or killing the task: the console heals itself
+# and the C driver resumes.)
+#
+# progress counts translated keys — `stable of` it from the WM or
+# scheduler and a wedged driver reads stalled, same as any task.
+
+e0 is 0
+mods is 0                # bit 1 shift, bit 2 ctrl, bit 4 alt (KMOD_*)
+progress is 0.0
+
+define pad(m) as:
+    local i is 0
+    loop while i < 128:
+        append of [m, 0]
+        i is i + 1
+
+define load(m, ps) as:   # flat [sc,code, sc,code, ...] pairs
+    local i is 0
+    loop while i < (len of ps):
+        m[ps[i]] is ps[i + 1]
+        i is i + 2
+
+# Base map: scancode -> ASCII/KEY_* code (0 = no key).
+kmap is []
+pad of (kmap)
+load of [kmap, [0x01,27, 0x0C,45, 0x0D,61, 0x0E,8, 0x0F,9, 0x1C,10, 0x39,32]]
+load of [kmap, [0x02,49, 0x03,50, 0x04,51, 0x05,52, 0x06,53, 0x07,54, 0x08,55, 0x09,56, 0x0A,57, 0x0B,48]]
+load of [kmap, [0x10,113, 0x11,119, 0x12,101, 0x13,114, 0x14,116, 0x15,121, 0x16,117, 0x17,105, 0x18,111, 0x19,112, 0x1A,91, 0x1B,93]]
+load of [kmap, [0x1E,97, 0x1F,115, 0x20,100, 0x21,102, 0x22,103, 0x23,104, 0x24,106, 0x25,107, 0x26,108, 0x27,59, 0x28,39, 0x29,96, 0x2B,92]]
+load of [kmap, [0x2C,122, 0x2D,120, 0x2E,99, 0x2F,118, 0x30,98, 0x31,110, 0x32,109, 0x33,44, 0x34,46, 0x35,47]]
+
+# Shifted non-letter keys (letters take the arithmetic uppercase path).
+kshift is []
+pad of (kshift)
+load of [kshift, [0x02,33, 0x03,64, 0x04,35, 0x05,36, 0x06,37, 0x07,94, 0x08,38, 0x09,42, 0x0A,40, 0x0B,41]]
+load of [kshift, [0x0C,95, 0x0D,43, 0x1A,123, 0x1B,125, 0x27,58, 0x28,34, 0x29,126, 0x2B,124, 0x33,60, 0x34,62, 0x35,63]]
+
+# 0xE0-prefixed keys -> KEY_* codes above the ASCII range.
+ke0 is []
+pad of (ke0)
+load of [ke0, [0x48,0x80, 0x50,0x81, 0x4B,0x82, 0x4D,0x83, 0x47,0x84, 0x4F,0x85, 0x53,0x86, 0x49,0x87, 0x51,0x88]]
+load of [ke0, [0x1C,10, 0x35,47]]
+
+define handle(sc) as:
+    if sc == 0xE0:
+        e0 is 1
+        return 0
+    local ext is e0
+    e0 is 0
+    local idx is sc % 0x80
+    local down is 1
+    if sc >= 0x80:
+        down is 0
+    # Modifiers update state, inject nothing (parity with the C driver).
+    # An E0'd 2A/AA is the "fake shift" some sets emit around extended
+    # keys — it must not flip real shift state.
+    if (idx == 0x2A) or (idx == 0x36):
+        if ext == 0:
+            if down == 1:
+                mods is bit_or of [mods, 1]
+            if down == 0:
+                mods is bit_and of [mods, 6]
+        return 0
+    if idx == 0x1D:
+        if down == 1:
+            mods is bit_or of [mods, 2]
+        if down == 0:
+            mods is bit_and of [mods, 5]
+        return 0
+    if idx == 0x38:
+        if down == 1:
+            mods is bit_or of [mods, 4]
+        if down == 0:
+            mods is bit_and of [mods, 3]
+        return 0
+    local c is 0
+    if ext == 1:
+        c is ke0[idx]
+    if ext == 0:
+        c is kmap[idx]
+        if (bit_and of [mods, 1]) == 1:
+            if kshift[idx] != 0:
+                c is kshift[idx]
+            if (c >= 97) and (c <= 122):
+                c is c - 32
+    if c == 0:
+        return 0
+    kbd_inject of [c, down, mods]
+    return 1
+
+define step() as:
+    local b is irq_read of 1
+    loop while b >= 0:
+        progress is progress + (handle of (b))
+        b is irq_read of 1
+    return progress

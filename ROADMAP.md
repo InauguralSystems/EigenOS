@@ -629,12 +629,15 @@ upstream, never worked around.
 
 ## Phase 5 — outward
 
-- [ ] **M12 — devices in EigenScript.** Drivers as `.eigs` programs:
-      port I/O, MMIO/volatile semantics, interrupt-driven callbacks from
-      the language. Proof: reimplement the PS/2 keyboard driver in
-      EigenScript and swap it in. The newest axis the portfolio has never
-      touched — likely the richest untapped gap-finder (bytes, volatile,
-      FFI, IRQ-safe callbacks).
+- [x] **M12 — devices in EigenScript (DONE 2026-07-03).** Drivers as
+      `.eigs` programs: port I/O, interrupt-driven input from the
+      language, and the proof — the PS/2 keyboard driver reimplemented
+      in EigenScript and swapped in live. DISPOSITION on MMIO/volatile:
+      deferred to the first real MMIO device (the M13 NIC) — the only
+      MMIO the machine touches today is the LFB, already owned by the
+      gfx seam, and an unconsumed peek/poke surface would be untested
+      API. The axis paid out as a gap-finder on day one (hex literals,
+      EigenScript #378).
     - [x] **Phase 1 — raw port I/O (DONE 2026-07-03).** `in{b,w,l}` /
           `out{b,w,l}` builtins in hal.c: mechanism only, out-of-range
           ports/values refused (never truncated), and the ATA register
@@ -678,6 +681,29 @@ upstream, never worked around.
           REPL. Next: kbd.eigs — the set-1 state machine in EigenScript
           feeding translated input back, stepped by the REPL wait
           loop's driver pump.
+    - [x] **Phase 3 — kbd.eigs swapped in (DONE 2026-07-03; the
+          milestone proof).** `demos/kbd.eigs` IS the keyboard driver:
+          the scancode set-1 state machine (0xE0 prefix, make/break,
+          modifier tracking incl. the fake-shift rule, shifted-symbol
+          table, KEY_* extended codes) as a driver task; the kernel
+          keeps only the byte banking. Seams: `kbd_inject` pushes
+          translated keys into the SAME two rings the C translator
+          feeds (downstream can't tell who translated; the driver's
+          mods snapshot becomes the live kbd_mods() reading so ctrl
+          line-editing keeps working), `kbd_driver of tid` registers
+          the task, and the REPL key-wait pumps it — only when claim-
+          ring bytes are pending, so an idle prompt costs no evals; a
+          failed step force-releases back to the C driver, loudly.
+          `kbd_take` is the script's consuming window into the char
+          ring (tape-participating). Proven three ways: hosted twin
+          gate `tools/kbd_twin_hosted.eigs` (22 checks — run it before
+          touching kbd.eigs), the boot self-test (loopback shift-a + b
+          -> 'A','b' through the script state machine on the production
+          path), and live under sendkey — after `irq_claim of 1`, the
+          lines `6 * 7`, `(2 + 3) * 4`, and `irq_release of 1` itself
+          were all typed THROUGH the EigenScript driver (42, 20, clean
+          fallback to C after release). The machine's keyboard is now
+          software it can read.
 - [ ] **M13 — networking (later).** A NIC driver + the HTTP extension
       freestanding. Deliberately last: biggest surface, lowest
       forcing-function novelty (the HTTP stack is already hardened

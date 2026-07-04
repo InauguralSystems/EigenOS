@@ -55,6 +55,11 @@ int irq_hook_read(int irq) {
     return (int)b;
 }
 
+int irq_hook_pending(int irq) {
+    if (irq < 0 || irq >= NIRQ) return 0;
+    return g_tail[irq] != g_head[irq];
+}
+
 int irq_hook_dropped(int irq) {
     return (irq >= 0 && irq < NIRQ) ? (int)g_drop[irq] : 0;
 }

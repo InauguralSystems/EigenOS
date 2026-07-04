@@ -20,6 +20,7 @@ int  irq_hook_release_all(void);   /* -> how many claims were dropped */
 int  irq_hook_claimed(int irq);    /* consulted on the IRQ path */
 void irq_hook_push(int irq, uint8_t b);  /* IRQ context: full = drop, never block */
 int  irq_hook_read(int irq);       /* next raw byte, -1 if empty/unclaimed */
+int  irq_hook_pending(int irq);    /* ring non-empty? (cheap peek, no pop) */
 int  irq_hook_dropped(int irq);    /* bytes lost to a full ring (live gauge) */
 
 #endif /* EIGENOS_IRQHOOK_H */
