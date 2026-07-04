@@ -20,17 +20,6 @@ define device(bus, dev) as:
     local id is cfg_read of [bus, dev, 0, 0]
     return (id - (id % 0x10000)) / 0x10000
 
-define hex4(n) as:
-    local digits is ["0","1","2","3","4","5","6","7","8","9","A","B","C","D","E","F"]
-    local s is ""
-    local i is 0
-    local v is n
-    loop while i < 4:
-        s is digits[v % 16] + s
-        v is (v - (v % 16)) / 16
-        i is i + 1
-    return s
-
 # Class code (byte at 0x0B): what KIND of device — 0x06 bridge, 0x03
 # display, 0x01 storage, 0x02 network (the M13 target will show as 02).
 define class_of(bus, dev) as:
@@ -44,7 +33,7 @@ define scan() as:
     loop while dev < 32:
         id is cfg_read of [0, dev, 0, 0]
         if id % 0x10000 != 0xFFFF:
-            print of f"  0:{str of dev}.0  vendor {hex4 of (id % 0x10000)}  device {hex4 of ((id - (id % 0x10000)) / 0x10000)}  class {hex4 of (class_of of [0, dev])}"
+            print of f"  0:{str of dev}.0  vendor {hex of [id % 0x10000, 4]}  device {hex of [(id - (id % 0x10000)) / 0x10000, 4]}  class {hex of [class_of of [0, dev], 2]}"
             n is n + 1
         dev is dev + 1
     return n

@@ -77,11 +77,13 @@ set_regs of [0, 0, 128 + 0x12, 1, 1, 26, 0]
 t is now of []
 check of ["12h 12PM is 12", t.hour, 12]
 
-# civil-days references (Python-computed)
-check of ["days 1970-01-01", days_civil of [1970, 1, 1], 0]
-check of ["days 2000-03-01", days_civil of [2000, 3, 1], 11017]
-check of ["days 2024-02-29 (leap)", days_civil of [2024, 2, 29], 19782]
-check of ["days 2026-07-04", days_civil of [2026, 7, 4], 20638]
+# civil-days math now lives upstream (lib/datetime.eigs, suite [50d]
+# pins it there); here we assert rtc's COMPOSITION through it end to
+# end: a clean binary/24h midnight image must equal the reference
+# epoch seconds.
+import datetime
+set_regs of [0, 0, 0, 1, 1, 26, 6]
+check of ["unix composes through datetime", unix of [], datetime.epoch_from_civil of [2026, 1, 1, 0, 0, 0]]
 
 if fails == 0:
     print of "RTC_TWIN_ALL_PASS"

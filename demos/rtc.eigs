@@ -2,7 +2,9 @@
 # the M12 port seam (ports 0x70 index / 0x71 data; no kernel C at all).
 # Handles the update-in-progress window (read twice, retry on tear),
 # BCD vs binary mode, 12h vs 24h mode (status register B), and turns
-# the calendar into seconds-since-epoch (Hinnant civil-days). Reports
+# the calendar into seconds-since-epoch (datetime's pure civil-math
+# half — the module's clock functions are host-only, but the Hinnant
+# arithmetic runs on every profile). Reports
 # the CMOS time AS STORED — UTC on this fleet (Ubuntu keeps CMOS in
 # UTC on the T3200; QEMU defaults to host UTC).
 #
@@ -10,6 +12,8 @@
 #   rtc.stamp of []      # "2026-07-04 05:12:33"
 #   rtc.unix of []       # seconds since 1970-01-01 (numeric time key)
 #   t is rtc.now of []   # {year, month, day, hour, minute, second}
+#
+import datetime
 #
 # Disposition: port reads are raw device access and do NOT ride the M11
 # tape (same as blk_read/pci) — a journal replay re-reads the live
@@ -73,23 +77,9 @@ define now() as:
         tries is tries + 1
     return {"year": 2000 + a[5], "month": a[4], "day": a[3], "hour": a[2], "minute": a[1], "second": a[0]}
 
-# Days since 1970-01-01 for a civil date (Hinnant, exact integer math).
-define days_civil(y, m, d) as:
-    local yy is y
-    if m <= 2:
-        yy is yy - 1
-    local era is (yy - (yy % 400)) / 400
-    local yoe is yy - (era * 400)
-    local mp is (m + 9) % 12
-    local t is (153 * mp) + 2
-    local doy is ((t - (t % 5)) / 5) + d - 1
-    local doe is (yoe * 365) + ((yoe - (yoe % 4)) / 4) - ((yoe - (yoe % 100)) / 100) + doy
-    return (era * 146097) + doe - 719468
-
 define unix() as:
     local t is now of []
-    local days is days_civil of [t.year, t.month, t.day]
-    return (days * 86400) + (t.hour * 3600) + (t.minute * 60) + t.second
+    return datetime.epoch_from_civil of [t.year, t.month, t.day, t.hour, t.minute, t.second]
 
 define pad2(v) as:
     if v < 10:
