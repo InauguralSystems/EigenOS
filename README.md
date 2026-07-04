@@ -51,7 +51,11 @@ BREAK key** (upstream #379, the async abort seam): a runaway
 in every input mode, on both keyboard drivers (a raw-scancode tracker
 under the claim seam keeps rescue alive even when a wedged .eigs
 driver owns the keyboard). The machine can no longer be bricked from
-its own REPL.
+its own REPL. And it knows what time it is: `demos/rtc.eigs` drives
+the CMOS RTC entirely from script (BCD/binary, 12h/24h, torn-read
+retry, seconds-since-epoch) — `rtc.stamp of []` at the REPL, and every
+boot logs its own wall time in the self-test board. Twin gate:
+`tools/rtc_twin_hosted.eigs`.
 
 **Milestone-9.5 (done): pixels and a pointer.** The Multiboot2 header
 requests a 1024x768x32 linear framebuffer (optional — GRUB boots us

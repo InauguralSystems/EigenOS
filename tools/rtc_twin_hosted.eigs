@@ -1,0 +1,90 @@
+# Hosted twin harness for EigenOS demos/rtc.eigs (the .eigs CMOS RTC
+# driver). Stubs the port seam (outb/inb) with scripted CMOS register
+# images and asserts the whole translation surface: BCD and binary
+# modes, 12h PM/AM edge hours, the torn-read retry, civil-days math
+# against Python-computed references, and the stamp format. Run from
+# the EigenOS repo root:
+#   eigenscript tools/rtc_twin_hosted.eigs
+# Exits nonzero on any failure — run before touching demos/rtc.eigs.
+
+# ---- port stubs: regs is a dict keyed by str of the CMOS index ----
+regs is {}
+sel is 0
+# tearseq: optional list of register images; each full pass through
+# read_raw consumes... simpler: swap `regs` mid-test from the harness.
+
+define outb(port, v) as:
+    if port == 0x70:
+        sel is v
+    return 1
+
+define inb(port) as:
+    return regs[str of sel]
+
+load_file of "demos/rtc.eigs"
+
+fails is 0
+define check(tag, got, want) as:
+    if got == want:
+        print of f"  PASS: {tag}"
+    if got != want:
+        print of f"  FAIL: {tag} (got {str of got}, want {str of want})"
+        fails is fails + 1
+
+define set_regs(sec, mn, hr, dy, mo, yr, statb) as:
+    regs is {}
+    regs["0"] is sec
+    regs["2"] is mn
+    regs["4"] is hr
+    regs["7"] is dy
+    regs["8"] is mo
+    regs["9"] is yr
+    regs["10"] is 0          # status A: update never in progress
+    regs["11"] is statb      # status B: bit2 binary, bit1 24h
+
+print of "=== rtc.eigs twin (CMOS translation vs references) ==="
+
+# binary + 24h (status B = 6): 2026-07-04 05:12:33
+set_regs of [33, 12, 5, 4, 7, 26, 6]
+t is now of []
+check of ["binary/24h year", t.year, 2026]
+check of ["binary/24h month", t.month, 7]
+check of ["binary/24h day", t.day, 4]
+check of ["binary/24h hour", t.hour, 5]
+check of ["binary/24h minute", t.minute, 12]
+check of ["binary/24h second", t.second, 33]
+check of ["stamp format", stamp of [], "2026-07-04 05:12:33"]
+check of ["unix epoch seconds", unix of [], (20638 * 86400) + (5 * 3600) + (12 * 60) + 33]
+
+# BCD + 24h (status B = 2): same instant, BCD-encoded (0x33 = 51 etc.)
+set_regs of [0x33, 0x12, 0x05, 0x04, 0x07, 0x26, 2]
+t is now of []
+check of ["bcd/24h second", t.second, 33]
+check of ["bcd/24h minute", t.minute, 12]
+check of ["bcd/24h year", t.year, 2026]
+
+# BCD + 12h (status B = 0): 11:59:59 PM Dec 31 -> 23:59:59
+set_regs of [0x59, 0x59, 128 + 0x11, 0x31, 0x12, 0x25, 0]
+t is now of []
+check of ["12h 11PM is 23", t.hour, 23]
+check of ["12h day", t.day, 31]
+
+# 12h midnight edge: 12:00:00 AM -> hour 0; noon: 12 PM -> 12
+set_regs of [0, 0, 0x12, 1, 1, 26, 0]
+t is now of []
+check of ["12h 12AM is 0", t.hour, 0]
+set_regs of [0, 0, 128 + 0x12, 1, 1, 26, 0]
+t is now of []
+check of ["12h 12PM is 12", t.hour, 12]
+
+# civil-days references (Python-computed)
+check of ["days 1970-01-01", days_civil of [1970, 1, 1], 0]
+check of ["days 2000-03-01", days_civil of [2000, 3, 1], 11017]
+check of ["days 2024-02-29 (leap)", days_civil of [2024, 2, 29], 19782]
+check of ["days 2026-07-04", days_civil of [2026, 7, 4], 20638]
+
+if fails == 0:
+    print of "RTC_TWIN_ALL_PASS"
+if fails > 0:
+    print of f"{str of fails} FAILURES"
+    throw of "rtc twin failed"

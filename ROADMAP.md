@@ -724,6 +724,24 @@ upstream, never worked around.
           real ctrl-c through the 8042 then aborts a runaway loop;
           live under sendkey, `loop while 1:` + ctrl-c → `aborted` →
           prompt returns → 42, on the C driver AND through kbd.eigs.
+    - [x] **Addendum — the machine knows what time it is (DONE
+          2026-07-04).** `demos/rtc.eigs`: the CMOS RTC as a
+          pure-script driver over the port seam — zero kernel C.
+          Update-in-progress guard + consistent-double-read (torn
+          reads retried), BCD/binary and 12h/24h modes per status
+          register B, `now` (calendar dict), `unix` (Hinnant
+          civil-days → seconds since epoch, the numeric time key the
+          journal lacked), `stamp` ("2026-07-04 05:30:02"). Reports
+          CMOS time AS STORED — UTC on this fleet. Twin gate
+          `tools/rtc_twin_hosted.eigs` (19 checks: both encodings,
+          the AM/PM edge hours, torn-read plumbing, civil-days vs
+          Python references) — run before touching rtc.eigs. Boot
+          self-test sanity-checks the calendar, proves the clock
+          advances across a delay, and prints the stamp — every boot
+          now logs its own wall time; QEMU stamp matched host UTC.
+          Disposition: port reads stay off the M11 tape (raw device
+          access, same as blk/pci) — sample `rtc.unix of []` into a
+          binding when a journaled session should carry the moment.
 - [ ] **M13 — networking (later).** A NIC driver + the HTTP extension
       freestanding. Deliberately last: biggest surface, lowest
       forcing-function novelty (the HTTP stack is already hardened

@@ -2044,6 +2044,36 @@ int eigs_run_demo(void) {
                         : "[m12] break: runaway-loop abort FAILED\n");
     if (!brk_ok) return 0;
 
+    /* Wall-clock time via demos/rtc.eigs — a pure-script CMOS driver
+     * over the port seam (no kernel C). Sanity-check the calendar and
+     * prove the clock ADVANCES across a delay; the verdict prints the
+     * stamp, so every boot logs its own wall time. */
+    EigsValue *v14 = eigs_eval_string(
+        "import rtc\n"
+        "t is rtc.now of []\n"
+        "u1 is rtc.unix of []\n"
+        "gfx_delay of 1200\n"
+        "u2 is rtc.unix of []\n"
+        "ok is (t.month >= 1) and (t.month <= 12) and (t.day >= 1) and (t.day <= 31)\n"
+        "ok is ok and (t.hour < 24) and (t.minute < 60) and (t.second < 61) and (u2 > u1)\n"
+        "s is \"\"\n"
+        "if ok == 1:\n"
+        "    s is rtc.stamp of []\n"
+        "s");
+    int rtc_ok = v14 && eigs_value_type(v14) == EIGS_TYPE_STR &&
+                 eigs_value_as_string(v14) && eigs_value_as_string(v14)[0];
+    if (rtc_ok) {
+        serial_write("[m12] rtc: ");
+        serial_write(eigs_value_as_string(v14));
+        serial_write(" UTC (script CMOS driver) OK\n");
+    }
+    if (v14) eigs_value_release(v14);
+    if (eigs_has_error()) { rtc_ok = 0; eigs_clear_error(); }
+    if (!rtc_ok) {
+        serial_write("[m12] rtc: script CMOS probe FAILED\n");
+        return 0;
+    }
+
     if (!stack_canary_ok()) {
         serial_write("[mn] PANIC: boot-stack canary trampled during demo\n");
         vga_put_at(19, 0, "MN: STACK CANARY TRAMPLED", 0x4F);
