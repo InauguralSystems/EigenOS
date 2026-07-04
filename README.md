@@ -223,7 +223,18 @@ rejects ELF64, so GRUB does the loading.
   The WM is list-driven: a window is a record in a z-ordered list,
   and adding one is a single `spawn_win` call (observer health stays
   in named scalar slots — a trajectory needs a binding, and list
-  elements have none).
+  elements have none). The desktop's first real application is the
+  **solver window**: EigenMiniSat's CDCL solver, byte-unmodified from
+  the ROM bundle (`win_sat` = int_vector + solver.eigs + a window
+  body, the tidefs concatenation), stepped cooperatively via the
+  upstream budgeted-session API (`cdcl_begin`/`cdcl_step`) and cycling
+  SAT/UNSAT pigeonhole cases forever. Its published progress is the
+  bounded `1.5 + (work % 8)` signal (the #294 unbounded-counter
+  lesson); any key wedges the solver and the frozen signal turns the
+  title red — the observer distinguishing a working solver from a
+  stalled one with no solver-specific WM code. Boot self-test `[sat]`
+  solves pigeonhole 4-4 in ≤12 budgeted steps every boot; hosted twin
+  gate: `tools/win_sat_twin_hosted.eigs`.
 - [x] **M7.5** — the machine has software: the EigenScript stdlib (67
   modules) + demos baked into the image as a ROM bundle, served through
   the upstream source-provider seam (EigenScript PR #362) — `import

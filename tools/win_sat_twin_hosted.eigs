@@ -1,0 +1,86 @@
+# Hosted twin harness for the solver window (demos/satwin.eigs, bundled
+# as win_sat by concatenation with int_vector + EigenMiniSat's solver).
+# Stubs the window seams (win_key, gfx_*) in pure EigenScript, loads the
+# same three parts the Makefile concatenates, and drives step():
+#   - the solve series must complete SAT (pigeonhole 4-4) then UNSAT
+#     (pigeonhole 5-4) with zero wrong verdicts
+#   - the published progress signal must MOVE across working steps
+#     (the #294 bounded-signal design) and FREEZE while wedged
+#   - wedging must actually stop solver work (counters frozen)
+# Couples to the sibling ../EigenScript and ../EigenMiniSat checkouts,
+# like the Makefile rule it twins. Run from the EigenOS repo root:
+#   ../EigenScript/src/eigenscript tools/win_sat_twin_hosted.eigs
+# Exits nonzero on any failure — run before touching demos/satwin.eigs.
+
+keyq is []
+
+define win_key(unused) as:
+    if (len of keyq) == 0:
+        return 0 - 1
+    local k is keyq[0]
+    list_remove_at of [keyq, 0]
+    return k
+
+define gfx_clear(a) as:
+    return null
+
+define gfx_text(a) as:
+    return null
+
+define gfx_rect(a) as:
+    return null
+
+load_file of "../EigenScript/lib/int_vector.eigs"
+load_file of "../EigenMiniSat/lib/solver.eigs"
+load_file of "demos/satwin.eigs"
+
+fails is 0
+
+define check(tag, cond) as:
+    if cond:
+        print of f"  PASS: {tag}"
+    if not cond:
+        print of f"  FAIL: {tag}"
+        fails is fails + 1
+
+print of "=== win_sat twin (solver window vs the budgeted CDCL session) ==="
+
+# progress must move across consecutive working steps
+p1 is step of []
+p2 is step of []
+p3 is step of []
+check of ["progress moves while working (1->2)", p1 != p2]
+check of ["progress moves while working (2->3)", p2 != p3]
+check of ["progress stays off zero", (p1 > 0) and (p2 > 0) and (p3 > 0)]
+
+# run the series to two completed cases: SAT then UNSAT
+steps is 3
+loop while (solved < 2) and (steps < 400):
+    step of []
+    steps += 1
+check of ["two cases completed under 400 steps", solved >= 2]
+check of ["took multiple steps (budgeted, not one-shot)", steps > 4]
+check of ["both verdicts correct", (verdicts_ok == 2) and (verdicts_bad == 0)]
+check of ["second case verdict UNSAT", last_status == "UNSAT"]
+
+# wedge: a key toggles it; a wedged step does no solver work and the
+# published signal freezes (the honest stall the WM must see as red)
+work_before is work
+append of [keyq, 30]
+pw1 is step of []
+pw2 is step of []
+pw3 is step of []
+check of ["wedged: progress frozen", (pw1 == pw2) and (pw2 == pw3)]
+check of ["wedged: no solver work", work == work_before]
+
+# unwedge: resumes
+append of [keyq, 30]
+pu1 is step of []
+pu2 is step of []
+check of ["unwedged: progress moves again", pu1 != pu2]
+check of ["unwedged: work resumed", work > work_before]
+
+if fails > 0:
+    print of f"win_sat twin: {str of fails} FAILURE(S)"
+    assert of [0, "win_sat twin failed"]
+print of "win_sat twin: all checks passed"

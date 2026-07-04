@@ -418,7 +418,16 @@ static double task_step_id(int id) {            /* shared: builtin + kbd pump */
     if (r) eigs_value_release(r);               /* released on the TASK state */
     g_active_task = -1;
     int failed = eigs_has_error();
-    if (failed) eigs_clear_error();
+    if (failed) {
+        /* A task dying on an eval error must be LOUD: the WM shows a
+         * dead window, but only the serial log can say why. */
+        serial_write("[task] step error (task ");
+        serial_write_dec((uint64_t)id);
+        serial_write("): ");
+        serial_write(eigs_last_error_message());
+        serial_write("\n");
+        eigs_clear_error();
+    }
     eigs_thread_switch(g_primary);
     if (failed) { g_tasks[id].alive = 0; return -1; }
     return out;
@@ -1887,6 +1896,31 @@ int eigs_run_demo(void) {
                               : "M9: task lifecycle FAILED",
                task_ok ? 0x0A : 0x4F);
     if (!task_ok) return 0;
+
+    /* The solver window's engine: EigenMiniSat's CDCL from the ROM
+     * bundle (win_sat = int_vector + solver.eigs byte-unmodified + the
+     * window body), stepped as a task with a bounded budget per step —
+     * the budgeted-session API upstream. 12 steps must complete the
+     * first case (pigeonhole 4-4, SAT) with a correct verdict. This is
+     * a real application workload: DPLL/CDCL search + learnt-clause
+     * churn on the kheap, at boot, every boot. */
+    EigsValue *v7s = eigs_eval_string(
+        "tid is task_spawn of \"win_sat\"\n"
+        "i is 0\n"
+        "loop while i < 12:\n"
+        "    task_step of tid\n"
+        "    i += 1\n"
+        "sv is task_read of [tid, \"solved\"]\n"
+        "bad is task_read of [tid, \"verdicts_bad\"]\n"
+        "task_kill of tid\n"
+        "(sv >= 1) and (bad == 0)");
+    int sat_ok = v7s && eigs_value_type(v7s) == EIGS_TYPE_NUM &&
+                 (int)eigs_value_as_num(v7s) == 1;
+    if (v7s) eigs_value_release(v7s);
+    if (eigs_has_error()) { sat_ok = 0; eigs_clear_error(); }
+    serial_write(sat_ok ? "[sat] CDCL solver task: pigeonhole 4-4 SAT in <=12 budgeted steps OK\n"
+                        : "[sat] CDCL solver task self-test FAILED\n");
+    if (!sat_ok) return 0;
 
     /* M9.5: pixels + pointer — the script draws through the second
      * backend, the kernel reads one pixel back from VRAM (the only

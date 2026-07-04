@@ -1,0 +1,105 @@
+# The solver window — EigenMiniSat's CDCL as a desktop application.
+# NOT a standalone module: build/gen/win_sat.eigs concatenates
+# EigenScript's int_vector.eigs + EigenMiniSat's solver.eigs (both
+# byte-unmodified) + this file, the tidefs pattern. `import win_sat`
+# gets the whole solver; this file is filtered OUT of the bundle.
+#
+# Each step() runs a bounded slice of a CDCL solve (cdcl_step with a
+# small budget — the budgeted-session API exists for exactly this
+# cooperative shape) and cycles SAT/UNSAT pigeonhole cases forever, so
+# the window is a permanent workload: kheap churn from learnt clauses,
+# and a live subject for the WM's observer.
+#
+# The progress signal is the #294 lesson applied: a raw conflict
+# counter grows without bound and reads as flat entropy (the observer
+# blind spot), so the published signal is 1.5 + (work % 8) — bounded,
+# off zero (stable-of-0.0 is degenerate), moving every working step.
+# Any key toggles WEDGE: step() then does no work and progress
+# freezes, which is an honest stall — the WM's `stable of` should
+# paint this window's title red. That is the experiment.
+
+case_idx is 0
+session is null
+expected is "-"
+last_case is "-"
+last_status is "-"
+solved is 0
+verdicts_ok is 0
+verdicts_bad is 0
+work is 0
+wedged is 0
+progress is 1.5
+budget is 6
+
+define ph_case(pigeons, holes) as:
+    # pigeonhole PHP(p,h): var (i,j) = pigeon i in hole j, 1-based
+    # index i*holes + j + 1. UNSAT iff pigeons > holes.
+    local clauses is []
+    local i is 0
+    loop while i < pigeons:
+        local row is []
+        local j is 0
+        loop while j < holes:
+            append of [row, i * holes + j + 1]
+            j += 1
+        append of [clauses, row]
+        i += 1
+    local h is 0
+    loop while h < holes:
+        local a is 0
+        loop while a < pigeons:
+            local b is a + 1
+            loop while b < pigeons:
+                local pair is []
+                append of [pair, 0 - (a * holes + h + 1)]
+                append of [pair, 0 - (b * holes + h + 1)]
+                append of [clauses, pair]
+                b += 1
+            a += 1
+        h += 1
+    return { "nvars": pigeons * holes, "clauses": clauses }
+
+define step() as:
+    local k is win_key of []
+    loop while k >= 0:
+        wedged is 1 - wedged
+        k is win_key of []
+
+    if wedged == 0:
+        if session == null:
+            local pigeons is 4 + (case_idx % 2)
+            expected is "SAT"
+            if pigeons > 4:
+                expected is "UNSAT"
+            local c is ph_case of [pigeons, 4]
+            session is cdcl_begin of [c.nvars, c.clauses, null]
+            last_case is f"pigeonhole {str of pigeons}-4"
+        local st is cdcl_step of [session, budget]
+        work is work + budget
+        if st != "RUNNING":
+            last_status is st
+            solved += 1
+            if st == expected:
+                verdicts_ok += 1
+            if st != expected:
+                verdicts_bad += 1
+            session is null
+            case_idx += 1
+        progress is 1.5 + (work % 8)
+
+    gfx_clear of [16, 22, 38]
+    gfx_text of [10, 8, "sat solver", 140, 160, 220, 2]
+    gfx_text of [10, 36, last_case + "  last: " + last_status, 200, 208, 226, 1]
+    gfx_text of [10, 54, f"solved {str of solved}  ok {str of verdicts_ok}  bad {str of verdicts_bad}", 200, 208, 226, 1]
+    if session != null:
+        gfx_text of [10, 72, f"conflicts {str of session.stats.conflicts}  decisions {str of session.stats.decisions}  learnts {str of session.stats.learnts}", 150, 190, 160, 1]
+    if session == null:
+        gfx_text of [10, 72, "between cases", 110, 120, 160, 1]
+    # activity strip: the bounded work signal, visible
+    gfx_rect of [10, 96, 132, 10, 40, 48, 70]
+    gfx_rect of [12 + (work % 8) * 16, 98, 12, 6, 120, 230, 150]
+    if wedged == 1:
+        gfx_text of [10, 116, "WEDGED (any key resumes)", 230, 120, 110, 1]
+    if wedged == 0:
+        gfx_text of [10, 116, "any key wedges the solver", 110, 120, 160, 1]
+    return progress

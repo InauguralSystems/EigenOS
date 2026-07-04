@@ -57,7 +57,19 @@ build/gen/tidefs.eigs: $(TIDELOG)/src/cbor.eigs $(TIDELOG)/src/store.eigs | buil
 	mkdir -p build/gen
 	{ cat $(TIDELOG)/src/cbor.eigs; echo; cat $(TIDELOG)/src/store.eigs; } > $@
 
-BUNDLE_SRCS := $(wildcard $(EIGS)/lib/*.eigs) $(wildcard demos/*.eigs) build/gen/tidefs.eigs
+# The solver window: `import win_sat` = EigenScript's int_vector +
+# EigenMiniSat's CDCL solver (both byte-unmodified — solver.eigs is
+# composition-free since EigenMiniSat #56) + the window body
+# (demos/satwin.eigs, filtered out of the wildcard so the partial file
+# is not a broken standalone module). Same concatenation pattern as
+# tidefs. Couples to the sibling ../EigenMiniSat checkout.
+# Twin gate: tools/win_sat_twin_hosted.eigs.
+SAT := ../EigenMiniSat
+build/gen/win_sat.eigs: $(EIGS)/lib/int_vector.eigs $(SAT)/lib/solver.eigs demos/satwin.eigs | build
+	mkdir -p build/gen
+	{ cat $(EIGS)/lib/int_vector.eigs; echo; cat $(SAT)/lib/solver.eigs; echo; cat demos/satwin.eigs; } > $@
+
+BUNDLE_SRCS := $(wildcard $(EIGS)/lib/*.eigs) $(filter-out demos/satwin.eigs,$(wildcard demos/*.eigs)) build/gen/tidefs.eigs build/gen/win_sat.eigs
 KERNEL := build/EigenOS.elf
 ISO    := build/EigenOS.iso
 

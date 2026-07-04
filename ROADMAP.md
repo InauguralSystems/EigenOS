@@ -763,6 +763,17 @@ upstream, never worked around.
       freestanding. Deliberately last: biggest surface, lowest
       forcing-function novelty (the HTTP stack is already hardened
       hosted).
+- [ ] **M14 candidate — preemption / hung-eval recovery.** Quantified
+      evidence from the solver window (the first real application):
+      `task_spawn` of the 64 KB win_sat module compiles synchronously
+      inside the WM's frame, freezing the whole desktop for ~a minute
+      under TCG (minutes of wall time read as a dead machine — three
+      debugging rounds were spent on screendumps of the stale shadow
+      frame before the cause was found). Per-STEP budgets are solved
+      (the budgeted CDCL session keeps a running solver cooperative);
+      per-SPAWN and hung-eval gaps are not. Candidates: incremental
+      compile at spawn, a spawn-progress seam the WM can draw, or real
+      preemption.
 
 ## Non-goals
 
