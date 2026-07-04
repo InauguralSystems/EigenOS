@@ -277,8 +277,11 @@ rejects ELF64, so GRUB does the loading.
   with a transcript oracle exact to the recorded machine readings
   (`tools/journal_chaos.py`, 8/8 seeds);
   `prev of` / `state_at` against the computer itself; recovery = replay
-- [ ] **M12** — devices as `.eigs` drivers (port I/O, MMIO, IRQ callbacks
-  from the language)
+- [x] **M12** — devices as `.eigs` drivers: raw port I/O from script
+  (`pci.scan of []` enumerates the bus), the IRQ-claim seam, and the
+  PS/2 keyboard driver reimplemented in EigenScript and swapped in
+  live (`demos/kbd.eigs`); ctrl-c break + a script CMOS clock and
+  speaker driver rode in as addenda (MMIO defers to the M13 NIC)
 - [ ] **M13** — networking (deliberately last)
 
 ## License
