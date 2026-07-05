@@ -733,9 +733,10 @@ upstream, never worked around.
           civil-days → seconds since epoch, the numeric time key the
           journal lacked), `stamp` ("2026-07-04 05:30:02"). Reports
           CMOS time AS STORED — UTC on this fleet. Twin gate
-          `tools/rtc_twin_hosted.eigs` (19 checks: both encodings,
-          the AM/PM edge hours, torn-read plumbing, civil-days vs
-          Python references) — run before touching rtc.eigs. Boot
+          `tools/rtc_twin_hosted.eigs` (16 checks: both BCD and binary
+          encodings, the 12h AM/PM edge hours, stamp format, and unix
+          composed through datetime — the civil-days math itself now
+          lives in lib/datetime.eigs) — run before touching rtc.eigs. Boot
           self-test sanity-checks the calendar, proves the clock
           advances across a delay, and prints the stamp — every boot
           now logs its own wall time; QEMU stamp matched host UTC.

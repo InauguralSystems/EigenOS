@@ -17,7 +17,7 @@ make serial   # sanity: watch the verdict ladder go green, ctrl-a x to quit
 Expected serial ladder (all must be OK / documented-skip):
 m0 multiboot → m1 serial+IDT → m2 pmm → m3 paging → m4 timer →
 m5 kheap + evals → mn define/observer/canary → m7.5 import →
-m8 vitals → m9 tasks → m9.5 gfx (+pointer) → m10 ata/fs probe →
+m8 vitals → m9 tasks → sat pigeonhole ≤12 steps → m9.5 gfx (+pointer) → m10 ata/fs probe →
 m11 auto-journal → m12 pci vendor / irq loopback / kbd.eigs /
 break(ctrl-c) / rtc stamp / spkr gate / cpu_margin.
 

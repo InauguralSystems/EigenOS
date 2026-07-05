@@ -235,8 +235,9 @@ rejects ELF64, so GRUB does the loading.
   stalled one with no solver-specific WM code. Boot self-test `[sat]`
   solves pigeonhole 4-4 in ≤12 budgeted steps every boot; hosted twin
   gate: `tools/win_sat_twin_hosted.eigs`.
-- [x] **M7.5** — the machine has software: the EigenScript stdlib (67
-  modules) + demos baked into the image as a ROM bundle, served through
+- [x] **M7.5** — the machine has software: the entire EigenScript stdlib
+  (currently 73 modules) + demos baked into the image as a ROM bundle,
+  served through
   the upstream source-provider seam (EigenScript PR #362) — `import
   math` works and `import life` runs Conway's Life at the bare-metal
   REPL, no filesystem anywhere.

@@ -32,6 +32,11 @@ LTS, kernel 6.8.0-124-generic. Captured 2026-07-02.
   actually gets consulted at boot before committing to a `menuentry`
   edit. Machine firmware date is 2008-07-23 (SMBIOS 2.5), so this is a
   UEFI 1.x / early-2.0 vintage — expect quirks.
+  - **SUPERSEDED 2026-07-02** (sentinel run, see `T3200-BOOT-LOG.md`):
+    firmware supports UEFI (the ESP exists) but the machine actually
+    **boots via BIOS/CSM, not UEFI** — `/sys/firmware/efi` is absent and
+    `mokutil` reports EFI variables unsupported. The "firmware is UEFI"
+    header above was an unverified inference from the mounted ESP.
 - **/boot is NOT a separate partition** (`findmnt /boot` empty). GRUB
   path is `/boot/EigenOS.elf`, matching the primary case in the playbook.
 - **NIC for M13**: Marvell 88E8040 PCI-E Fast Ethernet + Qualcomm Atheros
