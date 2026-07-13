@@ -23,6 +23,8 @@
 
 #define PG_PRESENT 0x1ULL
 #define PG_WRITE   0x2ULL
+#define PG_PWT     0x8ULL     /* write-through  (device MMIO)             */
+#define PG_PCD     0x10ULL    /* cache-disable  (device MMIO — M13 NIC)   */
 #define PG_HUGE    0x80ULL
 
 /* Build the tables (identity low 1 GiB + direct-map all RAM) and load

@@ -27,6 +27,34 @@ Developed and tested under QEMU first.
 
 ## Status
 
+**Milestone-13-1 (done): the frame seam — the machine is on the
+wire.** An Intel 8254x (e1000) driver, the OS's first real MMIO
+device: `src/e1000.c` finds it over PCI config mechanism #1, maps
+BAR0 uncached (`PG_PCD|PG_PWT`), reads the MAC, and runs legacy
+RX/TX descriptor rings in PMM pages through the direct map (DMA
+physical addresses known by construction — never from the kheap's
+non-contiguous virtual arena). Polled, interrupts masked: the ATA
+rationale, and M12 already defined a script driver's "interrupt
+callback" as a cooperative drain. The kbd.eigs split repeats one
+level up — the kernel owns the rings, `demos/net.eigs` owns the
+frames: ARP crafted and parsed in pure EigenScript over four
+builtins (`net_present`/`net_mac`/`net_send`/`net_recv`).
+**Tape-first:** a received frame is a nondeterministic machine
+input, so `net_recv` rides the M11 journal via the take/record
+seam — a journaled session that read frames replays with the
+recorded frames. Proven from inside and outside: boot self-tests
+(PHY-loopback byte-exact TX->RX round trip — the 8042-loopback
+analog, needs no backend; `net.arp_probe of [10, 0, 2, 2]` gets
+slirp's real ARP reply and returns its MAC through the script
+seam), the hosted twin `tools/net_twin_hosted.eigs` (12 checks,
+planted-fault validated), and the external harness
+`tools/net_frames.py` — the guest's ARP request captured byte-exact
+in a filter-dump pcap, and a frame injected over a `-netdev dgram`
+UDP pair echoed back byte-exact (MACs swapped) through REPL-driven
+`net.echo_wait`. M13-2 (ARP cache/IP/UDP as script layers) is next;
+on the T3200 the verdict honestly reads "no supported NIC" until a
+driver for its real NIC earns its keep.
+
 **Milestone-12 (done): devices in EigenScript.** The keyboard driver
 is now a `.eigs` program. Three layers, each proven at boot and live:
 raw port I/O (`in{b,w,l}`/`out{b,w,l}`, out-of-range refused, ATA
@@ -294,7 +322,13 @@ rejects ELF64, so GRUB does the loading.
   PS/2 keyboard driver reimplemented in EigenScript and swapped in
   live (`demos/kbd.eigs`); ctrl-c break + a script CMOS clock and
   speaker driver rode in as addenda (MMIO defers to the M13 NIC)
-- [ ] **M13** — networking (deliberately last)
+- [x] **M13-1** — the frame seam: e1000 over PCI/MMIO (polled rings,
+  DMA from PMM pages), `demos/net.eigs` speaking ARP from script,
+  `net_recv` on the journal tape; proven by PHY loopback, a slirp
+  ARP round-trip, an external pcap capture, and byte-exact frame
+  injection (`tools/net_frames.py`)
+- [ ] **M13-2** — the protocol tower in script (ARP cache, IPv4,
+  UDP, DHCP; then TCP/HTTP when the tower can carry it)
 
 ## License
 

@@ -1,0 +1,172 @@
+# Hosted twin harness for EigenOS demos/net.eigs (the frame-level M13
+# module). Stubs the four kernel seams (net_mac / net_send / net_recv /
+# gfx_delay+gfx_ticks) in pure EigenScript, feeds crafted frame tapes,
+# and asserts the exact bytes net.eigs puts on the wire and the exact
+# parses it makes of what comes back. Run from the EigenOS repo root:
+#   eigenscript tools/net_twin_hosted.eigs
+# Exits nonzero on any failure — run before touching demos/net.eigs.
+
+sent is []            # every net_send frame, captured as a byte list
+feed is []            # frames net_recv serves (0 = "nothing pending")
+fi is 0
+tnow is 0
+
+define net_mac() as:
+    local m is buffer of 6
+    local v is [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]
+    local i is 0
+    loop while i < 6:
+        buf_set of [m, i, v[i]]
+        i is i + 1
+    return m
+
+define net_send(f) as:
+    local n is buf_len of f
+    local l is []
+    local i is 0
+    loop while i < n:
+        append of [l, buf_get of [f, i]]
+        i is i + 1
+    append of [sent, l]
+    return 1
+
+define net_recv() as:
+    if fi >= (len of feed):
+        return null
+    local x is feed[fi]
+    fi is fi + 1
+    if (type of x) == "buffer":
+        return x
+    return null
+
+define gfx_delay(ms) as:
+    return 1
+
+define gfx_ticks() as:
+    tnow is tnow + 50
+    return tnow
+
+load_file of "demos/net.eigs"
+
+fails is 0
+
+define reset(tape) as:
+    sent is []
+    feed is tape
+    fi is 0
+
+define check(tag, got, want) as:
+    if got == want:
+        print of f"  PASS: {tag}"
+    if got != want:
+        print of f"  FAIL: {tag} (got {str of got}, wanted {str of want})"
+        fails is fails + 1
+
+# Build a frame buffer from a byte list.
+define frame(bytes) as:
+    local f is buffer of (len of bytes)
+    local i is 0
+    loop while i < (len of bytes):
+        buf_set of [f, i, bytes[i]]
+        i is i + 1
+    return f
+
+# Append every element of xs to dst (lists don't concatenate).
+define extend(dst, xs) as:
+    local i is 0
+    loop while i < (len of xs):
+        append of [dst, xs[i]]
+        i is i + 1
+
+# A valid ARP reply from 10.0.2.2 (slirp's shape): responder MAC
+# 52:55:0A:00:02:02, addressed to us.
+define arp_reply() as:
+    local l is [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]        # dst = us
+    extend of [l, [0x52, 0x55, 0x0A, 0x00, 0x02, 0x02]]          # src = responder
+    extend of [l, [0x08, 0x06]]                                   # ARP
+    extend of [l, [0x00, 0x01, 0x08, 0x00, 0x06, 0x04]]           # htype/ptype/hlen/plen
+    extend of [l, [0x00, 0x02]]                                   # op 2 = reply
+    extend of [l, [0x52, 0x55, 0x0A, 0x00, 0x02, 0x02]]           # sender hw
+    extend of [l, [10, 0, 2, 2]]                                  # sender ip
+    extend of [l, [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]]           # target hw = us
+    extend of [l, [10, 0, 2, 15]]                                 # target ip
+    return frame of l
+
+print of "=== net.eigs twin (frame policy vs crafted tapes) ==="
+
+# -- mac_str formats the MAC --
+check of ["mac_str", mac_str of (net_mac of []), "52:54:00:12:34:56"]
+
+# -- arp_probe: the request bytes on the wire, exactly --
+reset of ([0, arp_reply of []])          # one empty poll, then the reply
+got is arp_probe of [10, 0, 2, 2]
+check of ["arp_probe returns responder MAC", got, "52:55:0A:00:02:02"]
+check of ["arp_probe sent exactly one frame", len of sent, 1]
+req is sent[0]
+check of ["request is 42 bytes", len of req, 42]
+want is [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]               # broadcast
+extend of [want, [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]]        # src = us
+extend of [want, [0x08, 0x06]]                                 # ethertype ARP
+extend of [want, [0x00, 0x01, 0x08, 0x00, 0x06, 0x04]]        # htype 1, IPv4, 6/4
+extend of [want, [0x00, 0x01]]                                 # op 1 = request
+extend of [want, [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]]        # sender hw = us
+extend of [want, [10, 0, 2, 15]]                               # sender ip
+extend of [want, [0, 0, 0, 0, 0, 0]]                           # target hw unknown
+extend of [want, [10, 0, 2, 2]]                                # target ip
+bad is 0
+i is 0
+loop while i < 42:
+    if req[i] != want[i]:
+        bad is bad + 1
+        print of f"    byte {str of i}: got {str of req[i]}, wanted {str of want[i]}"
+    i is i + 1
+check of ["request bytes exact (RFC 826 who-has)", bad, 0]
+
+# -- noise on the wire is ignored; the reply behind it still parses --
+noisebytes is [0x52, 0x54, 0x00, 0x12, 0x34, 0x56, 1, 2, 3, 4, 5, 6, 0x08, 0x00]
+extend of [noisebytes, range of 40]
+noise is frame of noisebytes
+reset of ([noise, 0, arp_reply of []])
+check of ["noise skipped, reply parsed", arp_probe of [10, 0, 2, 2], "52:55:0A:00:02:02"]
+
+# -- a reply from the WRONG ip is not the answer --
+reset of ([arp_reply of []])
+check of ["reply from wrong ip ignored", arp_probe of [10, 0, 2, 3], ""]
+
+# -- silence -> "" after the bound (never a hang) --
+reset of ([])
+check of ["timeout returns empty", arp_probe of [10, 0, 2, 2], ""]
+
+# -- echo_wait: a 0x88B5 probe frame comes back byte-exact, MACs swapped --
+probe is [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]              # dst = us
+extend of [probe, [0x02, 0xAA, 0xBB, 0xCC, 0xDD, 0x01]]      # src = injector
+extend of [probe, [0x88, 0xB5]]                               # probe ethertype
+extend of [probe, [69, 73, 71, 69, 78, 79, 83, 45, 77, 49, 51]]   # "EIGENOS-M13"
+loop while (len of probe) < 60:
+    extend of [probe, [0]]
+other is frame of ([0x52, 0x54, 0x00, 0x12, 0x34, 0x56, 9, 9, 9, 9, 9, 9, 0x08, 0x00, 1, 2, 3])
+reset of ([other, frame of probe, 0])
+n is echo_wait of 120
+check of ["echo_wait echoed exactly one", n, 1]
+check of ["non-probe traffic not echoed", len of sent, 1]
+echo is sent[0]
+check of ["echo length preserved", len of echo, 60]
+bad2 is 0
+i is 0
+loop while i < 60:
+    w is probe[i]
+    if i < 6:
+        w is probe[6 + i]                # dst = injector's src
+    if (i >= 6) and (i < 12):
+        w is probe[i - 6]                # src = our MAC (old dst)
+    if echo[i] != w:
+        bad2 is bad2 + 1
+    i is i + 1
+check of ["echo bytes exact with MACs swapped", bad2, 0]
+
+print of ""
+if fails == 0:
+    print of "net twin: ALL PASS"
+if fails > 0:
+    print of f"net twin: {str of fails} FAILURE(S)"
+    exit of 1

@@ -21,6 +21,7 @@
 #include "fb.h"
 #include "mouse.h"
 #include "ata.h"
+#include "e1000.h"
 
 extern int  eigs_run_demo(void);  /* src/hal.c — drives the runtime (SSE side) */
 extern void eigs_repl(void);      /* src/hal.c — interactive REPL, never returns */
@@ -382,6 +383,31 @@ void kernel_main(uint32_t mb2_info, uint32_t mb2_magic) {
     } else {
         serial_write("[m10] ata: no disk (block device absent)\n");
         put_at(11, 0, "ata: no disk attached", 0x07);
+    }
+
+    /* --- M13: the NIC (polled e1000; PCI probe + MMIO rings). Absent
+     * hardware is a valid configuration (the T3200 has no 8254x),
+     * reported honestly; a present NIC must bring its rings up AND
+     * pass the PHY-loopback byte-exact TX->RX round trip — the
+     * self-injection proof, no backend needed. --- */
+    if (e1000_init()) {
+        const uint8_t *mac = e1000_mac();
+        static const char hx[] = "0123456789abcdef";
+        char macs[18];
+        for (int i = 0; i < 6; i++) {
+            macs[3 * i]     = hx[mac[i] >> 4];
+            macs[3 * i + 1] = hx[mac[i] & 0xF];
+            macs[3 * i + 2] = (i < 5) ? ':' : 0;
+        }
+        serial_write("[m13] e1000: 8254x up, MAC ");
+        serial_write(macs);
+        serial_write(" (rings armed, polled, ints masked)\n");
+        int lb = e1000_selftest_loopback();
+        serial_write(lb ? "[m13] e1000: PHY loopback 60-byte frame TX->RX byte-exact OK\n"
+                        : "[m13] e1000: PHY loopback round-trip FAILED\n");
+        /* M10+ verdicts are serial-only: the VGA board rows are full. */
+    } else {
+        serial_write("[m13] e1000: no supported NIC (network absent)\n");
     }
 
     /* --- M5: run the EigenScript runtime freestanding on this kernel --- */

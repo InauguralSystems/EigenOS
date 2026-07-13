@@ -39,7 +39,7 @@ OBJS   := build/boot.o build/kernel.o build/pmm.o build/serial.o \
           build/idt.o build/isr.o build/paging.o build/pic.o \
           build/timer.o build/keyboard.o build/kheap.o build/vga.o \
           build/fb.o build/mouse.o build/crashlog.o build/ata.o \
-          build/irqhook.o build/bundle.o
+          build/irqhook.o build/e1000.o build/bundle.o
 
 # The ROM bundle (M7.5): the EigenScript stdlib + demos/ baked into the
 # image, served via the eigs_set_source_provider seam — `import` on bare
@@ -81,7 +81,7 @@ build:
 build/boot.o: src/boot.S | build
 	$(CC) -m64 -c $< -o $@
 
-build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h src/paging.h src/pic.h src/timer.h src/keyboard.h src/kheap.h src/stackguard.h src/crashlog.h src/vga.h src/fb.h src/mouse.h src/ata.h | build
+build/kernel.o: src/kernel.c src/pmm.h src/multiboot2.h src/serial.h src/idt.h src/paging.h src/pic.h src/timer.h src/keyboard.h src/kheap.h src/stackguard.h src/crashlog.h src/vga.h src/fb.h src/mouse.h src/ata.h src/e1000.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/pmm.o: src/pmm.c src/pmm.h src/multiboot2.h src/crashlog.h | build
@@ -115,6 +115,9 @@ build/irqhook.o: src/irqhook.c src/irqhook.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 build/ata.o: src/ata.c src/ata.h src/io.h | build
+	$(CC) $(CFLAGS) $< -o $@
+
+build/e1000.o: src/e1000.c src/e1000.h src/io.h src/paging.h src/pmm.h src/timer.h | build
 	$(CC) $(CFLAGS) $< -o $@
 
 # The fb console's font is EigenScript's own gfx_text font, extracted

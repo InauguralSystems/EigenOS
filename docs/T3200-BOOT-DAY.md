@@ -19,7 +19,13 @@ m0 multiboot → m1 serial+IDT → m2 pmm → m3 paging → m4 timer →
 m5 kheap + evals → mn define/observer/canary → m7.5 import →
 m8 vitals → m9 tasks → sat pigeonhole ≤12 steps → m9.5 gfx (+pointer) → m10 ata/fs probe →
 m11 auto-journal → m12 pci vendor / irq loopback / kbd.eigs /
-break(ctrl-c) / rtc stamp / spkr gate / cpu_margin.
+break(ctrl-c) / rtc stamp / spkr gate / cpu_margin → m13 e1000.
+
+- **m13 on this hardware reads "no supported NIC (network absent)"
+  and then "net: skipped (no NIC)" — that is the CORRECT verdict**:
+  the T3200 has no Intel 8254x (its onboard NIC is a different chip;
+  a driver for it is future work). Under QEMU the same rows read the
+  MAC, a byte-exact PHY-loopback round trip, and a slirp ARP reply.
 
 Write the stick (dev box, never on the T3200 with its internal disk):
 

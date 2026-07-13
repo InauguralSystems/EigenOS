@@ -5,7 +5,8 @@ runtime, freestanding. **Niche but general**: general purpose defines the
 subsystem checklist, the observer niche defines how each item is answered —
 no POSIX imitation. Vision + milestone arc (M6 ✓ → M7 T3200 boot (open) → M8
 vitals-as-observed-bindings ✓ → M9 multitasking ✓ → M10 tidelog-FS ✓ →
-M11 journal ✓ → M12 .eigs drivers ✓ → M13 net (open)): **ROADMAP.md**. Resolved-bug
+M11 journal ✓ → M12 .eigs drivers ✓ → M13-1 e1000 frame seam ✓ →
+M13-2 protocol tower in script (open)): **ROADMAP.md**. Resolved-bug
 post-mortems: **KNOWN_ISSUES.md**.
 
 **First: figure out which machine you are on** (`hostnamectl` /

@@ -760,10 +760,72 @@ upstream, never worked around.
           covered. docs/T3200-BOOT-DAY.md: the one-page M7 runbook
           (pre-flight, attempt ladder, the proof script, post-boot
           discipline).
-- [ ] **M13 — networking (later).** A NIC driver + the HTTP extension
-      freestanding. Deliberately last: biggest surface, lowest
-      forcing-function novelty (the HTTP stack is already hardened
-      hosted).
+- [ ] **M13 — networking.** A NIC driver + (eventually) the HTTP
+      extension freestanding. Deliberately last: biggest surface,
+      lowest forcing-function novelty (the HTTP stack is already
+      hardened hosted). Cut into slices; the frame seam first, the
+      protocol tower in script on top of it.
+    - [x] **M13-1 — the frame seam (DONE 2026-07-13).** SCOPE CUT:
+          PCI-discovered e1000 bring-up + verified RX/TX of raw
+          ethernet frames, with everything above the frame boundary
+          deferred to M13-2 — a complete, externally-verifiable slice.
+          The driver split follows kbd.eigs exactly: the kernel owns
+          what the language cannot — `src/e1000.c` (kernel-flags,
+          rep-movsb copies, zero-xmm audit clean) does PCI config
+          mechanism #1 in C, maps BAR0 into the on-demand window
+          UNCACHED (the first real MMIO device — `PG_PCD|PG_PWT`
+          landed in paging.h for it), reads the MAC (RAL/RAH, EERD
+          fallback), and runs 32-descriptor RX / 8-descriptor TX
+          legacy rings in PMM pages reached through the direct map
+          (phys known by construction — the kheap's virtual arena is
+          deliberately not physically contiguous, so DMA never sees
+          kmalloc memory). POLLED, interrupts masked — the ATA
+          rationale: bounded behavior under a replayable machine
+          beats throughput, and the script's "interrupt callback"
+          was already defined by M12 as a cooperative drain. Frame
+          POLICY is script: `demos/net.eigs` (ARP who-has/parse,
+          probe-echo) over four hal.c builtins — `net_present`,
+          `net_mac` (6-byte buffer), `net_send` (frame buffer out),
+          `net_recv` (next frame buffer or null). TAPE-FIRST: a
+          received frame is a nondeterministic machine INPUT, so
+          net_recv takes the M11 tape via the take/record contract
+          (eigs_replay_take / eigs_trace_record_nondet — frames ride
+          the N records' b[...] buffer form, the frameless poll
+          records null): a journaled session that read frames
+          replays with the recorded frames. net_send is a plain
+          side effect (the blk_write precedent: replay re-sends).
+          PROVEN inside and outside: boot self-tests (rings-armed
+          verdict with the MAC; PHY-loopback byte-exact 60-byte
+          TX->RX round trip — the 8042-0xD2 analog, no backend
+          needed; script-side `net.arp_probe` gets slirp's ARP reply
+          from 10.0.2.2 and returns its MAC through the seam) +
+          hosted twin `tools/net_twin_hosted.eigs` (12 checks,
+          planted-fault validated: exact request bytes, noise
+          skipped, wrong-IP ignored, bounded timeout, echo
+          byte-exact with MACs swapped) + the EXTERNAL harness
+          `tools/net_frames.py` (the guest's ARP request captured
+          byte-exact in a filter-dump pcap; a 0x88B5 frame injected
+          over a `-netdev dgram` UDP pair comes back byte-exact with
+          MACs swapped through REPL-driven `net.echo_wait` — the
+          injected bytes crossed the wire, the ring, the tape seam,
+          script, and the TX path unmodified). QEMU gotcha, learned
+          by instrumented diagnosis: set_rctl arms a ONE-SECOND
+          receiver spin-up timer, and while it pends a PHY-looped
+          frame is DROPPED at transmit (qemu_receive_packet does not
+          queue on refusal) — the loopback self-test therefore
+          retries sends across a >1 s tick-bounded horizon. On the
+          T3200 (no 8254x) the verdict reads "no supported NIC",
+          honestly; its Marvell/Realtek-class NIC is a driver for
+          the day real hardware demands it.
+    - [ ] **M13-2 — the protocol tower in script.** ARP as a cache,
+          IPv4/ICMP, UDP, DHCP against slirp — pure `.eigs` layers on
+          the frame seam (net.eigs already holds the crafting/parsing
+          idiom), twin-gated like regionfs/kbd. The observer angle:
+          RTT/loss as observed bindings. Then TCP or the carved
+          ext_http builtins re-backed onto sockets-in-script — decide
+          when the tower is tall enough to carry it. The gdb remote
+          stub over the NIC (M7's debugging upgrade) also becomes
+          possible here.
 - [ ] **M14 candidate — preemption / hung-eval recovery.** Quantified
       evidence from the solver window (the first real application):
       `task_spawn` of the 64 KB win_sat module compiles synchronously

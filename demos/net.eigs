@@ -1,0 +1,117 @@
+# Frame-level networking in EigenScript (M13) — the first script that
+# speaks a wire protocol. The kernel's e1000 driver (src/e1000.c) owns
+# PCI discovery and the DMA rings; THIS file owns everything above the
+# frame boundary, over four builtins:
+#   net_present of []    1 when the NIC is up
+#   net_mac of []        our MAC as a 6-byte buffer
+#   net_send of f        transmit a frame buffer (14..1518 bytes)
+#   net_recv of []       next pending frame buffer, or null (on the
+#                        M11 tape: journaled sessions replay frames)
+#
+#   import net
+#   net.mac_str of (net_mac of [])   # "52:54:00:12:34:56"
+#   net.arp_probe of [10, 0, 2, 2]   # ARP who-has -> responder MAC ("" = none)
+#   net.echo_wait of 10000           # echo 0x88B5 probe frames for 10 s
+#
+# ARP/IP/UDP as reusable layers are M13-2 — this module is the seam
+# proof: craft a frame, put it on the wire, parse what comes back.
+
+define mac_str(b) as:
+    local s is ""
+    local i is 0
+    loop while i < 6:
+        if i > 0:
+            s is s + ":"
+        s is s + (hex of [buf_get of [b, i], 2])
+        i is i + 1
+    return s
+
+# Fill 6 bytes of dst starting at o from the list vs (numbers).
+define put6(dst, o, vs) as:
+    local i is 0
+    loop while i < 6:
+        buf_set of [dst, o + i, vs[i]]
+        i is i + 1
+
+# ARP who-has [a,b,c,d] (broadcast, sender 10.0.2.15 — slirp's guest
+# address; ARP itself does not require it to be leased). Returns the
+# responder's MAC as a string, "" when nothing answered in the bound
+# (~2 s of polling: RX is a cooperative drain, the M12 discipline).
+define arp_probe(a, b, c, d) as:
+    local m is net_mac of []
+    local f is buffer of 42
+    local i is 0
+    loop while i < 6:                    # dst = broadcast
+        buf_set of [f, i, 0xFF]
+        i is i + 1
+    i is 0
+    loop while i < 6:                    # src = us
+        buf_set of [f, 6 + i, buf_get of [m, i]]
+        i is i + 1
+    buf_set of [f, 12, 0x08]             # ethertype ARP
+    buf_set of [f, 13, 0x06]
+    buf_set of [f, 14, 0]                # htype 1
+    buf_set of [f, 15, 1]
+    buf_set of [f, 16, 0x08]             # ptype IPv4
+    buf_set of [f, 17, 0]
+    buf_set of [f, 18, 6]                # hlen / plen
+    buf_set of [f, 19, 4]
+    buf_set of [f, 20, 0]                # op 1 = request
+    buf_set of [f, 21, 1]
+    i is 0
+    loop while i < 6:                    # sender hw = us
+        buf_set of [f, 22 + i, buf_get of [m, i]]
+        i is i + 1
+    put6 of [f, 32, [0, 0, 0, 0, 0, 0]]  # target hw = unknown
+    buf_set of [f, 28, 10]               # sender ip 10.0.2.15
+    buf_set of [f, 29, 0]
+    buf_set of [f, 30, 2]
+    buf_set of [f, 31, 15]
+    buf_set of [f, 38, a]                # target ip
+    buf_set of [f, 39, b]
+    buf_set of [f, 40, c]
+    buf_set of [f, 41, d]
+    if (net_send of f) != 1:
+        return ""
+    local tries is 0
+    loop while tries < 400:
+        local r is net_recv of []
+        if (type of r) == "buffer":
+            if (buf_len of r) >= 42:
+                local isarp is ((buf_get of [r, 12]) == 0x08) and ((buf_get of [r, 13]) == 0x06)
+                local isreply is ((buf_get of [r, 20]) == 0) and ((buf_get of [r, 21]) == 2)
+                local fromit is ((buf_get of [r, 28]) == a) and ((buf_get of [r, 29]) == b) and ((buf_get of [r, 30]) == c) and ((buf_get of [r, 31]) == d)
+                if isarp and isreply and fromit:
+                    local rm is buffer of 6
+                    buf_copy of [r, 22, rm, 0, 6]
+                    return mac_str of rm
+        gfx_delay of 5
+        tries is tries + 1
+    return ""
+
+# One 0x88B5 experimental-ethertype frame, echoed: same bytes back on
+# the wire with src/dst swapped (our MAC becomes the source). This is
+# the guest half of the external RX-injection proof
+# (tools/net_frames.py drives it at the REPL).
+define echo_one(r) as:
+    local n is buf_len of r
+    local e is buffer of n
+    buf_copy of [r, 0, e, 0, n]
+    buf_copy of [r, 6, e, 0, 6]          # dst = injector's src
+    buf_copy of [r, 0, e, 6, 6]          # src = old dst (= our MAC)
+    return net_send of e
+
+# Drain-and-echo for ms milliseconds; returns how many probe frames
+# were echoed. Non-probe traffic is ignored.
+define echo_wait(ms) as:
+    local t0 is gfx_ticks of []
+    local n is 0
+    loop while ((gfx_ticks of []) - t0) < ms:
+        local r is net_recv of []
+        if (type of r) == "buffer":
+            if (buf_len of r) >= 14:
+                if ((buf_get of [r, 12]) == 0x88) and ((buf_get of [r, 13]) == 0xB5):
+                    if (echo_one of r) == 1:
+                        n is n + 1
+        gfx_delay of 5
+    return n
