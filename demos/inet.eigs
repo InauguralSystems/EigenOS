@@ -1,0 +1,390 @@
+# The internet layer in EigenScript (M13-2) — ARP as a cache, IPv4
+# craft + parse both directions, and the cooperative RX pump, pure
+# script on the M13-1 frame seam (net_present / net_mac / net_send /
+# net_recv). Upper layers (icmp/udp/dhcp) import this module and take
+# their protocol's packets from its queues; the pump is the single
+# reader of net_recv, so the whole tower stays on the M11 tape.
+#
+#   import inet
+#   inet.configure of [[10,0,2,15], [255,255,255,0], [10,0,2,2]]
+#   inet.arp_resolve of [[10, 0, 2, 2], 3000]    # "52:55:0A:00:02:02"
+#   inet.ip_send of [[10, 0, 2, 2], 1, seg]      # seg = ICMP buffer
+#
+# Discipline (all M12/M13-1 rules):
+#   - bounded waits: every poll loop is COUNT-bounded (tries x
+#     gfx_delay), never an unbounded spin; a dead wire returns "",
+#     never hangs. gfx_ticks/net_recv both ride the tape, so either
+#     bound replays; count-bounds keep the shape simple.
+#   - the QEMU set_rctl gotcha (6529b9e): for ~1 s after RCTL is
+#     written a transmitted frame can be DROPPED at the backend with
+#     TX still reporting success — so waits that matter re-SEND on a
+#     spaced retry schedule instead of trusting one send.
+#   - IPv4 fragments are dropped by design (no consumer reassembles;
+#     every datagram this machine speaks fits one frame).
+#   - checksums are RFC 1071 one's-complement, pinned in the twin
+#     against the RFC's own example and a known-good IPv4 header.
+
+# ---- configuration (set by dhcp.commit or configure) ----
+# Shared state lives in DICTS, field-written: the module export dict
+# snapshots rebound top-level names, but a dict's identity survives —
+# field writes are visible to every importer (the SPEC's module write
+# boundary; lib/ui.eigs's _ui is the reference pattern).
+cfg is {"ip": [0, 0, 0, 0], "mask": [0, 0, 0, 0], "gw": [0, 0, 0, 0], "up": 0, "gwup": 0}
+ipident is 1
+
+# ---- wire counters (stats["frames"] / stats["drops"]) ----
+stats is {"frames": 0.0, "drops": 0.0}
+
+# ---- ARP cache: "a.b.c.d" -> [m0..m5] ----
+arpc is {}
+
+# ---- per-protocol RX queues (head-index, compacted when drained) ----
+icmpq is []
+icmpqi is 0
+udpq is []
+udpqi is 0
+
+# ================= byte helpers =================
+
+define be16get(b, o) as:
+    return ((buf_get of [b, o]) * 256) + (buf_get of [b, o + 1])
+
+define be16put(b, o, v) as:
+    local lo is v % 256
+    buf_set of [b, o, (v - lo) / 256]
+    buf_set of [b, o + 1, lo]
+
+define be32get(b, o) as:
+    return ((be16get of [b, o]) * 65536) + (be16get of [b, o + 2])
+
+define put_bytes(b, o, vs) as:
+    local i is 0
+    loop while i < (len of vs):
+        buf_set of [b, o + i, vs[i]]
+        i is i + 1
+
+define bytes_at(b, o, n) as:
+    local l is []
+    local i is 0
+    loop while i < n:
+        append of [l, buf_get of [b, o + i]]
+        i is i + 1
+    return l
+
+define ipkey(ip) as:
+    return f"{str of ip[0]}.{str of ip[1]}.{str of ip[2]}.{str of ip[3]}"
+
+define macstr(m) as:
+    local s is ""
+    local i is 0
+    loop while i < 6:
+        if i > 0:
+            s is s + ":"
+        s is s + (hex of [m[i], 2])
+        i is i + 1
+    return s
+
+define our_mac() as:
+    local mb is net_mac of []
+    return bytes_at of [mb, 0, 6]
+
+# ================= RFC 1071 checksum =================
+# Twin-pinned vectors: the RFC's example bytes fold to 0xDDF2
+# (checksum 0x220D) and the classic known-good IPv4 header checks to
+# 0xB861; a verify over any intact header/segment folds to 0xFFFF.
+
+define csum_fold(s) as:
+    loop while s > 0xFFFF:
+        local lo is s % 0x10000
+        s is lo + ((s - lo) / 0x10000)
+    return s
+
+# Fold-sum of b[off, off+n) — 0xFFFF means "verifies clean" when the
+# stored checksum bytes are included in the range.
+define csum_sum(b, off, n) as:
+    local s is 0
+    local i is 0
+    loop while (i + 1) < n:
+        s is s + ((buf_get of [b, off + i]) * 256) + (buf_get of [b, off + i + 1])
+        i is i + 2
+    if i < n:
+        s is s + ((buf_get of [b, off + i]) * 256)
+    return csum_fold of s
+
+# The checksum to STORE for b[off, off+n) (checksum field zeroed).
+define csum16(b, off, n) as:
+    return 0xFFFF - (csum_sum of [b, off, n])
+
+# ================= configuration =================
+
+define configure(ip, mask, gw) as:
+    cfg["ip"] is ip
+    cfg["mask"] is mask
+    cfg["gw"] is gw
+    cfg["up"] is 0
+    if (ip[0] + ip[1] + ip[2] + ip[3]) > 0:
+        cfg["up"] is 1
+    cfg["gwup"] is 0
+    if (gw[0] + gw[1] + gw[2] + gw[3]) > 0:
+        cfg["gwup"] is 1
+    return cfg["up"]
+
+# ================= ARP =================
+
+define arp_lookup(ip) as:                 # cached MAC list, or 0
+    local k is ipkey of (ip)
+    if has_key of [arpc, k]:
+        return arpc[k]
+    return 0
+
+# Empty the ARP cache. The cache is live module state that a prior
+# resolve (e.g. the boot self-test's gateway ping) leaves warm; a run
+# whose net_recv sequence must be reproducible on a cold replay flushes
+# it first, so ip_send resolves the gateway the same way (cold, over
+# the wire / the tape) in both the recorded and the replayed context.
+define arp_flush() as:
+    arpc is {}
+
+# Craft one who-has for ip (sender = our config; the M13-1 probe
+# convention keeps ARP legal before a lease: sender ip may be 0.0.0.0).
+define arp_whohas(ip) as:
+    local m is our_mac of []
+    local f is buffer of 42
+    put_bytes of [f, 0, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]]
+    put_bytes of [f, 6, m]
+    put_bytes of [f, 12, [0x08, 0x06, 0, 1, 0x08, 0, 6, 4, 0, 1]]
+    put_bytes of [f, 22, m]
+    put_bytes of [f, 28, cfg["ip"]]
+    put_bytes of [f, 32, [0, 0, 0, 0, 0, 0]]
+    put_bytes of [f, 38, ip]
+    return net_send of f
+
+# Resolve ip to a MAC list (0 on timeout). Count-bounded polling with
+# spaced re-sends across the >1 s receiver spin-up horizon.
+define arp_resolve(ip, ms) as:
+    local hit is arp_lookup of (ip)
+    if (type of hit) == "list":
+        return hit
+    local tries is 0
+    local bound is ms / 30
+    loop while tries < bound:
+        if (tries % 33) == 0:
+            arp_whohas of (ip)
+        pump of []
+        hit is arp_lookup of (ip)
+        if (type of hit) == "list":
+            return hit
+        gfx_delay of 30
+        tries is tries + 1
+    return 0
+
+define arp_in(r, n) as:
+    if n < 42:
+        stats["drops"] is stats["drops"] + 1.0
+        return 0
+    if (be16get of [r, 14]) != 1:
+        stats["drops"] is stats["drops"] + 1.0
+        return 0
+    if (be16get of [r, 16]) != 0x0800:
+        stats["drops"] is stats["drops"] + 1.0
+        return 0
+    if ((buf_get of [r, 18]) != 6) or ((buf_get of [r, 19]) != 4):
+        stats["drops"] is stats["drops"] + 1.0
+        return 0
+    local op is be16get of [r, 20]
+    local smac is bytes_at of [r, 22, 6]
+    local sip is bytes_at of [r, 28, 4]
+    # replies AND requests both teach the cache (RFC 826 merge rule)
+    if (sip[0] + sip[1] + sip[2] + sip[3]) > 0:
+        local k is ipkey of (sip)
+        arpc[k] is smac
+    if op != 1:
+        return 1
+    if cfg["up"] == 0:
+        return 1
+    if (bytes_at of [r, 38, 4]) != cfg["ip"]:
+        return 1
+    # who-has us -> reply (unicast back to the asker)
+    local m is our_mac of []
+    local f is buffer of 42
+    put_bytes of [f, 0, smac]
+    put_bytes of [f, 6, m]
+    put_bytes of [f, 12, [0x08, 0x06, 0, 1, 0x08, 0, 6, 4, 0, 2]]
+    put_bytes of [f, 22, m]
+    put_bytes of [f, 28, cfg["ip"]]
+    put_bytes of [f, 32, smac]
+    put_bytes of [f, 38, sip]
+    net_send of f
+    return 1
+
+# ================= IPv4 =================
+
+define ip_bcast(ip) as:
+    return ip == [255, 255, 255, 255]
+
+define ip_local(dip) as:                  # on-link, or via the gateway?
+    if cfg["gwup"] == 0:
+        return 1
+    local i is 0
+    loop while i < 4:
+        local ma is (cfg["mask"])[i]
+        if (bit_and of [dip[i], ma]) != (bit_and of [(cfg["ip"])[i], ma]):
+            return 0
+        i is i + 1
+    return 1
+
+# Send seg (a buffer) to dip as protocol proto. Returns 1/0.
+define ip_send(dip, proto, seg) as:
+    local dmac is [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+    if (ip_bcast of (dip)) == 0:
+        local nh is dip
+        if (ip_local of (dip)) == 0:
+            nh is cfg["gw"]
+        dmac is arp_resolve of [nh, 3000]
+        if (type of dmac) != "list":
+            return 0
+    local sl is buf_len of seg
+    local f is buffer of (34 + sl)
+    put_bytes of [f, 0, dmac]
+    put_bytes of [f, 6, our_mac of []]
+    put_bytes of [f, 12, [0x08, 0x00]]
+    buf_set of [f, 14, 0x45]              # v4, ihl 5
+    buf_set of [f, 15, 0]                 # tos
+    be16put of [f, 16, 20 + sl]           # total length
+    be16put of [f, 18, ipident]           # identification
+    ipident is (ipident + 1) % 65536
+    be16put of [f, 20, 0]                 # flags 0, offset 0
+    buf_set of [f, 22, 64]                # ttl
+    buf_set of [f, 23, proto]
+    be16put of [f, 24, 0]                 # checksum slot
+    put_bytes of [f, 26, cfg["ip"]]
+    put_bytes of [f, 30, dip]
+    be16put of [f, 24, csum16 of [f, 14, 20]]
+    buf_copy of [seg, 0, f, 34, sl]
+    return net_send of f
+
+define qcap(q, qi) as:                    # drop-oldest bound, cap 32
+    if ((len of q) - qi) >= 32:
+        return qi + 1
+    return qi
+
+define ip_in(r, n) as:
+    if n < 34:
+        stats["drops"] is stats["drops"] + 1.0
+        return 0
+    local vi is buf_get of [r, 14]
+    if (vi < 0x45) or (vi > 0x4F):        # version 4, ihl >= 5
+        stats["drops"] is stats["drops"] + 1.0
+        return 0
+    local hl is (vi - 0x40) * 4
+    local tot is be16get of [r, 16]
+    if (tot < hl) or ((14 + tot) > n):
+        stats["drops"] is stats["drops"] + 1.0
+        return 0
+    if (csum_sum of [r, 14, hl]) != 0xFFFF:
+        stats["drops"] is stats["drops"] + 1.0        # planted-fault target: bad header csum
+        return 0
+    local fo is be16get of [r, 20]
+    if (bit_and of [fo, 0x3FFF]) != 0:    # MF set or nonzero offset
+        stats["drops"] is stats["drops"] + 1.0        # fragments dropped by design
+        return 0
+    local dst is bytes_at of [r, 30, 4]
+    local mine is 0
+    if ip_bcast of (dst):
+        mine is 1
+    if cfg["up"] == 0:
+        mine is 1                         # pre-lease (DHCP yiaddr unicast)
+    if (cfg["up"] == 1) and (dst == cfg["ip"]):
+        mine is 1
+    if mine == 0:
+        stats["drops"] is stats["drops"] + 1.0        # planted-fault target: wrong dst
+        return 0
+    local proto is buf_get of [r, 23]
+    local sip is bytes_at of [r, 26, 4]
+    local o is 14 + hl
+    local pl is tot - hl
+    if proto == 1:
+        local seg is buffer of pl
+        buf_copy of [r, o, seg, 0, pl]
+        icmpqi is qcap of [icmpq, icmpqi]
+        append of [icmpq, {"ip": sip, "seg": seg}]
+        return 1
+    if proto == 17:
+        udp_in of [r, o, pl, sip, dst]
+        return 1
+    stats["drops"] is stats["drops"] + 1.0
+    return 0
+
+# ================= UDP RX (parse + checksum verify) =================
+
+define udp_in(r, o, pl, sip, dip) as:
+    if pl < 8:
+        stats["drops"] is stats["drops"] + 1.0
+        return 0
+    local ul is be16get of [r, o + 4]
+    if (ul < 8) or (ul > pl):
+        stats["drops"] is stats["drops"] + 1.0
+        return 0
+    local c is be16get of [r, o + 6]
+    if c != 0:                            # 0 = sender opted out (IPv4)
+        local ph is buffer of (12 + ul)
+        put_bytes of [ph, 0, sip]
+        put_bytes of [ph, 4, dip]
+        buf_set of [ph, 8, 0]
+        buf_set of [ph, 9, 17]
+        be16put of [ph, 10, ul]
+        buf_copy of [r, o, ph, 12, ul]
+        if (csum_sum of [ph, 0, 12 + ul]) != 0xFFFF:
+            stats["drops"] is stats["drops"] + 1.0    # planted-fault target: bad UDP csum
+            return 0
+    local dl is ul - 8
+    local data is buffer of dl
+    if dl > 0:
+        buf_copy of [r, o + 8, data, 0, dl]
+    udpqi is qcap of [udpq, udpqi]
+    append of [udpq, {"ip": sip, "sport": be16get of [r, o], "dport": be16get of [r, o + 2], "data": data}]
+    return 1
+
+# ================= the pump + queue takes =================
+
+# One net_recv poll, dispatched. Returns 1 when a frame was consumed.
+define pump() as:
+    local r is net_recv of []
+    if (type of r) != "buffer":
+        return 0
+    stats["frames"] is stats["frames"] + 1.0
+    local n is buf_len of r
+    if n < 14:
+        stats["drops"] is stats["drops"] + 1.0
+        return 1
+    local et is be16get of [r, 12]
+    if et == 0x0806:
+        arp_in of [r, n]
+        return 1
+    if et == 0x0800:
+        ip_in of [r, n]
+        return 1
+    stats["drops"] is stats["drops"] + 1.0            # not ours (the tower speaks v4)
+    return 1
+
+define icmp_take() as:                    # next ICMP record, or null
+    if icmpqi >= (len of icmpq):
+        icmpq is []
+        icmpqi is 0
+        return null
+    local e is icmpq[icmpqi]
+    icmpqi is icmpqi + 1
+    return e
+
+# Next datagram for port, or null. Single-listener model: scanning
+# past a datagram for another port DROPS it (no consumer exists for
+# it by construction — one REPL, one listener at a time).
+define udp_take(port) as:
+    loop while udpqi < (len of udpq):
+        local e is udpq[udpqi]
+        udpqi is udpqi + 1
+        if e["dport"] == port:
+            return e
+    udpq is []
+    udpqi is 0
+    return null

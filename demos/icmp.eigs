@@ -1,0 +1,162 @@
+# ICMP echo in EigenScript (M13-2) — ping out, echo replies back, on
+# the inet layer. The observer IS the network instrumentation: rtt and
+# loss are plain module bindings sampled per ping, so their whole
+# trajectory accumulates in the slot for free — `stable of rtt` is
+# "the link settled", `diverging of rtt` is congestion/bufferbloat,
+# no counters or histograms needed. That is the M8-vitals pattern
+# pointed at a wire.
+#
+#   import icmp
+#   icmp.ping of [[10, 0, 2, 2], 3000]      # one echo -> rtt ms (-1 lost)
+#   icmp.ping_str of [[10, 0, 2, 2], 4]     # n pings -> verdict string
+#   icmp.serve of 10000                     # answer echo requests for 10 s
+#
+# Wire format both directions is crafted/parsed byte-by-byte here;
+# checksums are inet.csum16 (RFC 1071, twin-pinned).
+
+import inet
+
+ping_id is 0x4547            # 'EG'
+ping_seq is 0
+
+# ---- the observed network vitals ----
+sent is 0
+got is 0
+rtt is 0.0                   # ms, per-reply samples -> observer slot
+loss is 0.0                  # running loss ratio
+
+# Zero the cumulative vitals AND the sequence counter. These are live
+# module state that persists across calls (the boot self-test's pings
+# warm it before an interactive session), so a run whose output must be
+# reproducible independent of prior pings — a journaled tape replayed
+# on a cold boot — resets first: the replayed pings then send the same
+# sequence numbers the recorded replies carry (an unmatched seq would
+# reject the taped reply, poll extra times, and misalign the tape).
+define reset() as:
+    sent is 0
+    got is 0
+    rtt is 0.0
+    loss is 0.0
+    ping_seq is 0
+    inet.arp_flush of []       # cold-resolve the gateway, record == replay
+
+# One echo request/reply round trip. Returns the RTT in ms, or -1
+# when no matching reply arrived inside the bound. Count-bounded.
+define ping(ip, ms) as:
+    ping_seq is (ping_seq + 1) % 65536
+    local seg is buffer of 40             # 8 header + 32 payload
+    buf_set of [seg, 0, 8]                # type 8: echo request
+    buf_set of [seg, 1, 0]
+    inet.be16put of [seg, 2, 0]           # checksum slot
+    inet.be16put of [seg, 4, ping_id]
+    inet.be16put of [seg, 6, ping_seq]
+    local i is 0
+    loop while i < 32:
+        buf_set of [seg, 8 + i, 0x20 + i] # ' ' .. '?', the classic ramp
+        i is i + 1
+    inet.be16put of [seg, 2, inet.csum16 of [seg, 0, 40]]
+    local t0 is gfx_ticks of []
+    sent is sent + 1
+    if (inet.ip_send of [ip, 1, seg]) != 1:
+        loss is ((sent - got) / sent) + 0.0
+        return 0 - 1
+    local tries is 0
+    local bound is ms / 30
+    loop while tries < bound:
+        inet.pump of []
+        local e is inet.icmp_take of []
+        loop while (type of e) == "dict":
+            handle of [e, ip]
+            if lastmatch == 1:
+                local dt is (gfx_ticks of []) - t0
+                got is got + 1
+                rtt is dt + 0.0           # fresh value: the slot keeps trajectory
+                loss is ((sent - got) / sent) + 0.0
+                return dt
+            e is inet.icmp_take of []
+        gfx_delay of 30
+        tries is tries + 1
+    loss is ((sent - got) / sent) + 0.0
+    return 0 - 1
+
+# Shared RX handling: replies matching our id/seq set lastmatch;
+# incoming echo REQUESTS are answered (the machine is pingable while
+# any icmp wait or serve loop is pumping). Bad checksums are dropped
+# — a corrupt reply must read as loss, not as a reply.
+lastmatch is 0
+
+define handle(e, wantip) as:
+    lastmatch is 0
+    local seg is e["seg"]
+    local n is buf_len of seg
+    if n < 8:
+        return 0
+    if (inet.csum_sum of [seg, 0, n]) != 0xFFFF:
+        return 0                          # planted-fault target: bad csum
+    local t is buf_get of [seg, 0]
+    if t == 0:                            # echo reply
+        if (type of wantip) != "list":
+            return 0
+        if e["ip"] != wantip:
+            return 0
+        if (inet.be16get of [seg, 4]) != ping_id:
+            return 0                      # planted-fault target: wrong id
+        if (inet.be16get of [seg, 6]) != ping_seq:
+            return 0
+        local i is 8
+        loop while i < n:                 # payload must round-trip intact
+            if (buf_get of [seg, i]) != (0x20 + (i - 8)):
+                return 0
+            i is i + 1
+        lastmatch is 1
+        return 1
+    if t == 8:                            # echo request -> reply
+        local r is buffer of n
+        buf_copy of [seg, 0, r, 0, n]
+        buf_set of [r, 0, 0]
+        inet.be16put of [r, 2, 0]
+        inet.be16put of [r, 2, inet.csum16 of [r, 0, n]]
+        inet.ip_send of [e["ip"], 1, r]
+        return 1
+    return 0
+
+# Live counters for harnesses and callers: a FRESH dict per call —
+# the observed scalars rebind per sample, so the module export dict
+# cannot serve them (the SPEC's module write boundary).
+define counters() as:
+    return {"sent": sent, "got": got, "rtt": rtt, "loss": loss}
+
+# n pings -> a one-line verdict with the observed vitals. The report
+# word is the observer's read of the rtt slot's trajectory.
+define ping_str(ip, n) as:
+    local i is 0
+    local last is 0 - 1
+    loop while i < n:
+        last is ping of [ip, 3000]
+        i is i + 1
+    local k is inet.ipkey of (ip)
+    if got == 0:
+        return f"no echo reply from {k} in {str of n} tries"
+    local r is str of rtt
+    local lo is str of loss
+    local w is report of rtt
+    return f"echo {k} rtt {r} ms loss {lo} ({w}) [{str of got}/{str of sent}]"
+
+# Answer echo requests (and ARP, via the pump) for ms milliseconds;
+# returns how many requests were answered. Count-bounded.
+define serve(ms) as:
+    local nans is 0
+    local tries is 0
+    local bound is ms / 30
+    loop while tries < bound:
+        inet.pump of []
+        local e is inet.icmp_take of []
+        loop while (type of e) == "dict":
+            local seg is e["seg"]
+            if (buf_len of seg) >= 8:
+                if (buf_get of [seg, 0]) == 8:
+                    nans is nans + (handle of [e, 0])
+            e is inet.icmp_take of []
+        gfx_delay of 30
+        tries is tries + 1
+    return nans

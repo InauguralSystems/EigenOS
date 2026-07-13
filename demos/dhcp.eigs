@@ -1,0 +1,187 @@
+# DHCP client in EigenScript (M13-2) — DISCOVER/OFFER/REQUEST/ACK
+# (RFC 2131) over udp/inet, byte-crafted and byte-parsed like every
+# layer below it. On ACK the lease is committed into inet (ip, mask,
+# gateway), so the rest of the tower routes with it.
+#
+#   import dhcp
+#   l is dhcp.acquire of 15000     # {ok, ip, mask, gw, dns, server, lease}
+#   dhcp.acquire_str of 15000      # one-line verdict for the serial gate
+#
+# The xid derives from gfx_ticks — a TAPED nondet source — so a
+# journaled acquire replays with identical bytes (the tape carries
+# the ticks, the ticks make the xid, the xid matches the recorded
+# OFFER). Every wait is count-bounded; re-DISCOVER on a spaced
+# schedule covers both dropped datagrams and the QEMU receiver
+# spin-up window (6529b9e).
+
+import inet
+import udp
+
+# The lease is a DICT, field-written (the SPEC's module write
+# boundary: rebound scalars snapshot in the export dict; a mutated
+# dict stays live for every importer — hal.c's boot gate reads
+# dhcp.lease["gw"] straight out of it).
+lease is {"ok": 0, "ip": [0, 0, 0, 0], "mask": [0, 0, 0, 0], "gw": [0, 0, 0, 0], "dns": [0, 0, 0, 0], "server": [0, 0, 0, 0], "lease": 0}
+
+# ---- BOOTP crafting ----
+
+# A 300-byte BOOTREQUEST shell: header + our chaddr + magic cookie;
+# options start at 240, caller appends and terminates.
+define bootp_shell(xid) as:
+    local b is buffer of 300              # zero-filled by construction
+    buf_set of [b, 0, 1]                  # op BOOTREQUEST
+    buf_set of [b, 1, 1]                  # htype ethernet
+    buf_set of [b, 2, 6]                  # hlen
+    inet.be16put of [b, 4, (xid - (xid % 65536)) / 65536]
+    inet.be16put of [b, 6, xid % 65536]
+    inet.be16put of [b, 8, 0]             # secs
+    inet.be16put of [b, 10, 0x8000]       # flags: BROADCAST reply
+    inet.put_bytes of [b, 28, inet.our_mac of []]
+    inet.put_bytes of [b, 236, [0x63, 0x82, 0x53, 0x63]]
+    return b
+
+define opt_put(b, o, code, vs) as:
+    buf_set of [b, o, code]
+    buf_set of [b, o + 1, len of vs]
+    inet.put_bytes of [b, o + 2, vs]
+    return o + 2 + (len of vs)
+
+define send_discover(xid) as:
+    local b is bootp_shell of (xid)
+    local o is 240
+    o is opt_put of [b, o, 53, [1]]                # DHCPDISCOVER
+    o is opt_put of [b, o, 55, [1, 3, 6, 51, 54]]  # mask,router,dns,lease,server
+    buf_set of [b, o, 255]
+    return udp.send of [[255, 255, 255, 255], 68, 67, b]
+
+define send_request(xid, reqip, server) as:
+    local b is bootp_shell of (xid)
+    local o is 240
+    o is opt_put of [b, o, 53, [3]]                # DHCPREQUEST
+    o is opt_put of [b, o, 50, reqip]              # requested address
+    o is opt_put of [b, o, 54, server]             # server identifier
+    o is opt_put of [b, o, 55, [1, 3, 6, 51, 54]]
+    buf_set of [b, o, 255]
+    return udp.send of [[255, 255, 255, 255], 68, 67, b]
+
+# ---- BOOTP parsing ----
+
+# Parse the options field -> dict "code" -> byte list. Returns 0 on a
+# malformed packet (short, wrong op, bad magic cookie, truncated
+# option) — each a planted-fault target in the twin.
+define parse_reply(seg, xid) as:
+    local n is buf_len of seg
+    if n < 241:
+        return 0
+    if (buf_get of [seg, 0]) != 2:        # BOOTREPLY
+        return 0
+    local gotxid is ((inet.be16get of [seg, 4]) * 65536) + (inet.be16get of [seg, 6])
+    if gotxid != xid:
+        return 0                          # planted-fault target: wrong xid
+    if (inet.bytes_at of [seg, 236, 4]) != [0x63, 0x82, 0x53, 0x63]:
+        return 0                          # planted-fault target: bad cookie
+    local r is {"yiaddr": inet.bytes_at of [seg, 16, 4]}
+    local o is 240
+    loop while o < n:
+        local code is buf_get of [seg, o]
+        if code == 255:
+            return r
+        if code == 0:
+            o is o + 1
+            continue
+        if (o + 1) >= n:
+            return 0
+        local ol is buf_get of [seg, o + 1]
+        if (o + 2 + ol) > n:
+            return 0
+        r[str of code] is inet.bytes_at of [seg, o + 2, ol]
+        o is o + 2 + ol
+    return 0                              # ran off the end: no 255
+
+define opt4(r, code) as:                  # 4-byte option as ip list, or 0
+    if has_key of [r, code]:
+        local v is r[code]
+        if (len of v) == 4:
+            return v
+    return 0
+
+# Wait for a reply whose message type (option 53) is want; returns the
+# parsed dict or 0. Count-bounded; resend is the CALLER's schedule.
+define wait_reply(xid, want, ms) as:
+    local tries is 0
+    local bound is ms / 30
+    loop while tries < bound:
+        local d is udp.recv of [68, 30]
+        if (type of d) == "dict":
+            local r is parse_reply of [d["data"], xid]
+            if (type of r) == "dict":
+                if has_key of [r, "53"]:
+                    if r["53"] == [want]:
+                        return r
+                    if r["53"] == [6]:
+                        return "nak"      # DHCPNAK: fail honestly, fast
+        tries is tries + 1
+    return 0
+
+# ---- the client ----
+
+# Full handshake, up to 4 DISCOVER rounds inside the ms bound.
+# Returns {ok:1, ip, mask, gw, dns, server, lease} or {ok:0}.
+define acquire(ms) as:
+    inet.configure of [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+    lease["ok"] is 0
+    local xid is (((gfx_ticks of []) % 65521) * 65536) + 0x4553
+    local attempt is 0
+    loop while attempt < 4:
+        xid is xid + 1
+        if (send_discover of (xid)) == 1:
+            local offer is wait_reply of [xid, 2, ms / 4]
+            if (type of offer) == "dict":
+                local yip is offer["yiaddr"]
+                local server is opt4 of [offer, "54"]
+                if ((yip[0] + yip[1] + yip[2] + yip[3]) > 0) and ((type of server) == "list"):
+                    send_request of [xid, yip, server]
+                    local ack is wait_reply of [xid, 5, ms / 4]
+                    if ack == "nak":
+                        return {"ok": 0}
+                    if (type of ack) == "dict":
+                        return commit of [ack, server]
+        attempt is attempt + 1
+    return {"ok": 0}
+
+define commit(ack, server) as:
+    lease["ip"] is ack["yiaddr"]
+    lease["server"] is server
+    lease["mask"] is [255, 255, 255, 0]
+    local m is opt4 of [ack, "1"]
+    if (type of m) == "list":
+        lease["mask"] is m
+    lease["gw"] is [0, 0, 0, 0]
+    local g is opt4 of [ack, "3"]
+    if (type of g) == "list":
+        lease["gw"] is g
+    lease["dns"] is [0, 0, 0, 0]
+    local d is opt4 of [ack, "6"]
+    if (type of d) == "list":
+        lease["dns"] is d
+    lease["lease"] is 0
+    if has_key of [ack, "51"]:
+        local v is ack["51"]
+        if (len of v) == 4:
+            lease["lease"] is (((v[0] * 256) + v[1]) * 65536) + ((v[2] * 256) + v[3])
+    inet.configure of [lease["ip"], lease["mask"], lease["gw"]]
+    lease["ok"] is 1
+    return lease
+
+# One-line verdict for the serial gate; "" when no lease.
+define acquire_str(ms) as:
+    local l is acquire of (ms)
+    if l["ok"] != 1:
+        return ""
+    local a is inet.ipkey of (l["ip"])
+    local b is inet.ipkey of (l["mask"])
+    local c is inet.ipkey of (l["gw"])
+    local d is inet.ipkey of (l["dns"])
+    local e is inet.ipkey of (l["server"])
+    local t is str of l["lease"]
+    return f"lease {a} mask {b} gw {c} dns {d} server {e} for {t}s"

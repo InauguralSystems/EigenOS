@@ -1,0 +1,194 @@
+# Hosted twin harness for EigenOS demos/udp.eigs (M13-2 UDP). Stubs
+# the frame seam, feeds crafted frames (bytes precomputed by
+# tools/net_tower_vectors.py), and asserts exact datagram bytes out
+# (pseudo-header checksum included), port demux, the RFC 768 zero-
+# checksum rule, and the planted faults (bad checksum dropped AND
+# counted, wrong port never delivered). Run from the EigenOS repo root:
+#   (cd demos && eigenscript ../tools/udp_twin_hosted.eigs)
+# Exits nonzero on any failure — run before touching demos/udp.eigs.
+
+t_sent is []            # every net_send frame, captured as a byte list
+t_feed is []            # frames net_recv serves (0 = "nothing pending")
+t_fi is 0
+t_tnow is 0
+
+define net_mac() as:
+    local m is buffer of 6
+    local v is [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]
+    local i is 0
+    loop while i < 6:
+        buf_set of [m, i, v[i]]
+        i is i + 1
+    return m
+
+define net_send(f) as:
+    local n is buf_len of f
+    local l is []
+    local i is 0
+    loop while i < n:
+        append of [l, buf_get of [f, i]]
+        i is i + 1
+    append of [t_sent, l]
+    return 1
+
+define net_recv() as:
+    if t_fi >= (len of t_feed):
+        return null
+    local x is t_feed[t_fi]
+    t_fi is t_fi + 1
+    if (type of x) == "buffer":
+        return x
+    return null
+
+define gfx_delay(ms) as:
+    return 1
+
+define gfx_ticks() as:
+    t_tnow is t_tnow + 50
+    return t_tnow
+
+fails is 0
+
+define reset(tape) as:
+    t_sent is []
+    t_feed is tape
+    t_fi is 0
+
+define check(tag, got, want) as:
+    if got == want:
+        print of f"  PASS: {tag}"
+    if got != want:
+        print of f"  FAIL: {tag} (got {str of got}, wanted {str of want})"
+        fails is fails + 1
+
+define frame(bytes) as:
+    local f is buffer of (len of bytes)
+    local i is 0
+    loop while i < (len of bytes):
+        buf_set of [f, i, bytes[i]]
+        i is i + 1
+    return f
+
+define extend(dst, xs) as:
+    local i is 0
+    loop while i < (len of xs):
+        append of [dst, xs[i]]
+        i is i + 1
+
+define bytes_eq(tag, got, want) as:
+    if (len of got) != (len of want):
+        check of [tag, len of got, len of want]
+        return 0
+    local bad is 0
+    local i is 0
+    loop while i < (len of want):
+        if got[i] != want[i]:
+            bad is bad + 1
+            print of f"    byte {str of i}: got {str of got[i]}, wanted {str of want[i]}"
+        i is i + 1
+    check of [tag, bad, 0]
+    return 1
+
+import udp
+import inet
+
+arp_reply_gw is []
+extend of [arp_reply_gw, [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 6, 0, 1]]
+extend of [arp_reply_gw, [8, 0, 6, 4, 0, 2, 82, 85, 10, 0, 2, 2, 10, 0, 2, 2]]
+extend of [arp_reply_gw, [82, 84, 0, 18, 52, 86, 10, 0, 2, 15]]
+want_probe1 is []
+extend of [want_probe1, [82, 85, 10, 0, 2, 2, 82, 84, 0, 18, 52, 86, 8, 0, 69, 0]]
+extend of [want_probe1, [0, 45, 0, 1, 0, 0, 64, 17, 98, 175, 10, 0, 2, 15, 10, 0]]
+extend of [want_probe1, [2, 2, 19, 136, 183, 152, 0, 25, 150, 175, 69, 73, 71, 69, 78, 79]]
+extend of [want_probe1, [83, 45, 77, 49, 51, 45, 50, 45, 85, 68, 80]]
+reply_5000 is []
+extend of [reply_5000, [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [reply_5000, [0, 39, 3, 10, 0, 0, 64, 17, 95, 172, 10, 0, 2, 2, 10, 0]]
+extend of [reply_5000, [2, 15, 183, 152, 19, 136, 0, 19, 110, 121, 77, 49, 51, 45, 50, 45]]
+extend of [reply_5000, [82, 69, 80, 76, 89]]
+reply_wrongport is []
+extend of [reply_wrongport, [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [reply_wrongport, [0, 38, 3, 11, 0, 0, 64, 17, 95, 172, 10, 0, 2, 2, 10, 0]]
+extend of [reply_wrongport, [2, 15, 183, 152, 39, 15, 0, 18, 120, 160, 87, 82, 79, 78, 71, 45]]
+extend of [reply_wrongport, [80, 79, 82, 84]]
+reply_badcsum is []
+extend of [reply_badcsum, [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [reply_badcsum, [0, 36, 3, 12, 0, 0, 64, 17, 95, 173, 10, 0, 2, 2, 10, 0]]
+extend of [reply_badcsum, [2, 15, 183, 152, 19, 136, 0, 16, 168, 141, 66, 65, 68, 45, 67, 83]]
+extend of [reply_badcsum, [85, 77]]
+reply_zerocsum is []
+extend of [reply_zerocsum, [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [reply_zerocsum, [0, 37, 3, 13, 0, 0, 64, 17, 95, 171, 10, 0, 2, 2, 10, 0]]
+extend of [reply_zerocsum, [2, 15, 183, 152, 19, 136, 0, 17, 0, 0, 90, 69, 82, 79, 45, 67]]
+extend of [reply_zerocsum, [83, 85, 77]]
+reply_5001 is []
+extend of [reply_5001, [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [reply_5001, [0, 39, 3, 14, 0, 0, 64, 17, 95, 168, 10, 0, 2, 2, 10, 0]]
+extend of [reply_5001, [2, 15, 183, 152, 19, 137, 0, 19, 110, 120, 77, 49, 51, 45, 50, 45]]
+extend of [reply_5001, [82, 69, 80, 76, 89]]
+inject_echo is []
+extend of [inject_echo, [82, 84, 0, 18, 52, 86, 2, 170, 187, 204, 221, 9, 8, 0, 69, 0]]
+extend of [inject_echo, [0, 38, 3, 15, 0, 0, 64, 17, 95, 161, 10, 0, 2, 9, 10, 0]]
+extend of [inject_echo, [2, 15, 4, 210, 183, 153, 0, 18, 185, 245, 72, 69, 76, 76, 79, 45]]
+extend of [inject_echo, [69, 67, 72, 79]]
+arp_reply_peer is []
+extend of [arp_reply_peer, [82, 84, 0, 18, 52, 86, 2, 170, 187, 204, 221, 9, 8, 6, 0, 1]]
+extend of [arp_reply_peer, [8, 0, 6, 4, 0, 2, 2, 170, 187, 204, 221, 9, 10, 0, 2, 9]]
+extend of [arp_reply_peer, [82, 84, 0, 18, 52, 86, 10, 0, 2, 15]]
+want_echo_out is []
+extend of [want_echo_out, [2, 170, 187, 204, 221, 9, 82, 84, 0, 18, 52, 86, 8, 0, 69, 0]]
+extend of [want_echo_out, [0, 38, 0, 3, 0, 0, 64, 17, 98, 173, 10, 0, 2, 15, 10, 0]]
+extend of [want_echo_out, [2, 9, 183, 153, 4, 210, 0, 18, 185, 245, 72, 69, 76, 76, 79, 45]]
+extend of [want_echo_out, [69, 67, 72, 79]]
+
+print of "=== udp twin (datagrams both directions vs crafted frames) ==="
+
+inet.configure of [[10, 0, 2, 15], [255, 255, 255, 0], [10, 0, 2, 2]]
+
+# ---- send: pinned frame bytes (ident 1 = first ip_send here) ----
+pay is udp.buf_of_str of "EIGENOS-M13-2-UDP"
+reset of ([frame of arp_reply_gw])
+check of ["send returns 1", udp.send of [[10, 0, 2, 2], 5000, 47000, pay], 1]
+check of ["send: who-has then datagram", len of t_sent, 2]
+bytes_eq of ["datagram frame exact (net_tower_vectors.py)", t_sent[1], want_probe1]
+
+# ---- recv: delivery, demux, and the checksum gate ----
+reset of ([frame of reply_5000])
+d is udp.recv of [5000, 100]
+check of ["recv delivers a datagram", type of d, "dict"]
+check of ["payload intact", udp.str_of_buf of (d["data"]), "M13-2-REPLY"]
+check of ["source ip", d["ip"], [10, 0, 2, 2]]
+check of ["source port", d["sport"], 47000]
+
+reset of ([frame of reply_wrongport])
+d is udp.recv of [5000, 60]
+check of ["wrong-port datagram never delivered", type of d, "none"]
+
+d0 is inet.stats["drops"]
+reset of ([frame of reply_badcsum])
+d is udp.recv of [5000, 60]
+check of ["bad UDP checksum dropped", type of d, "none"]
+check of ["bad checksum counted", inet.stats["drops"] - d0, 1.0]
+
+reset of ([frame of reply_zerocsum])
+d is udp.recv of [5000, 60]
+check of ["zero checksum accepted (RFC 768 opt-out)", type of d, "dict"]
+check of ["zero-checksum payload intact", udp.str_of_buf of (d["data"]), "ZERO-CSUM"]
+
+# ---- probe: fixed payload out, reply string back ----
+reset of ([frame of reply_5001])
+check of ["probe returns the reply payload", udp.probe of [[10, 0, 2, 2], 47000, 5001], "M13-2-REPLY"]
+
+# ---- echo_serve: injected datagram echoed byte-exact ----
+reset of ([frame of inject_echo, frame of arp_reply_peer, 0])
+n is udp.echo_serve of [47001, 60]
+check of ["echo_serve echoed one datagram", n, 1]
+check of ["who-has the peer, then the echo", len of t_sent, 2]
+bytes_eq of ["echoed frame exact (ports mirrored, net_tower_vectors.py)", t_sent[1], want_echo_out]
+
+print of ""
+if fails == 0:
+    print of "udp twin: ALL PASS"
+if fails > 0:
+    print of f"udp twin: {str of fails} FAILURE(S)"
+    exit of 1

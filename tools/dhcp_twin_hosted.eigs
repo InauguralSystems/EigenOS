@@ -1,0 +1,449 @@
+# Hosted twin harness for EigenOS demos/dhcp.eigs (M13-2 DHCP client).
+# Stubs the frame seam and plays a scripted DHCP server against the
+# client (frames precomputed by tools/net_tower_vectors.py, valid UDP
+# checksums throughout so every fault is caught at the DHCP layer it
+# belongs to). Asserts the exact DISCOVER/REQUEST bytes on the wire
+# (xid = the taped-ticks schedule), the committed lease, and the
+# planted faults: wrong xid, bad magic cookie, missing server id, NAK,
+# wrong-xid ACK. Run from the EigenOS repo root:
+#   (cd demos && eigenscript ../tools/dhcp_twin_hosted.eigs)
+# Exits nonzero on any failure — run before touching demos/dhcp.eigs.
+
+t_sent is []            # every net_send frame, captured as a byte list
+t_feed is []            # frames net_recv serves (0 = "nothing pending")
+t_fi is 0
+t_tnow is 0
+
+define net_mac() as:
+    local m is buffer of 6
+    local v is [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]
+    local i is 0
+    loop while i < 6:
+        buf_set of [m, i, v[i]]
+        i is i + 1
+    return m
+
+define net_send(f) as:
+    local n is buf_len of f
+    local l is []
+    local i is 0
+    loop while i < n:
+        append of [l, buf_get of [f, i]]
+        i is i + 1
+    append of [t_sent, l]
+    return 1
+
+define net_recv() as:
+    if t_fi >= (len of t_feed):
+        return null
+    local x is t_feed[t_fi]
+    t_fi is t_fi + 1
+    if (type of x) == "buffer":
+        return x
+    return null
+
+define gfx_delay(ms) as:
+    return 1
+
+define gfx_ticks() as:
+    t_tnow is t_tnow + 50
+    return t_tnow
+
+fails is 0
+
+define reset(tape) as:
+    t_sent is []
+    t_feed is tape
+    t_fi is 0
+
+define check(tag, got, want) as:
+    if got == want:
+        print of f"  PASS: {tag}"
+    if got != want:
+        print of f"  FAIL: {tag} (got {str of got}, wanted {str of want})"
+        fails is fails + 1
+
+define frame(bytes) as:
+    local f is buffer of (len of bytes)
+    local i is 0
+    loop while i < (len of bytes):
+        buf_set of [f, i, bytes[i]]
+        i is i + 1
+    return f
+
+define extend(dst, xs) as:
+    local i is 0
+    loop while i < (len of xs):
+        append of [dst, xs[i]]
+        i is i + 1
+
+define bytes_eq(tag, got, want) as:
+    if (len of got) != (len of want):
+        check of [tag, len of got, len of want]
+        return 0
+    local bad is 0
+    local i is 0
+    loop while i < (len of want):
+        if got[i] != want[i]:
+            bad is bad + 1
+            print of f"    byte {str of i}: got {str of got[i]}, wanted {str of want[i]}"
+        i is i + 1
+    check of [tag, bad, 0]
+    return 1
+
+import dhcp
+import inet
+
+offer1 is []
+extend of [offer1, [255, 255, 255, 255, 255, 255, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [offer1, [1, 72, 0, 1, 0, 0, 64, 17, 109, 163, 10, 0, 2, 2, 255, 255]]
+extend of [offer1, [255, 255, 0, 67, 0, 68, 1, 52, 3, 221, 2, 1, 6, 0, 0, 50]]
+extend of [offer1, [69, 84, 0, 0, 128, 0, 0, 0, 0, 0, 10, 0, 2, 15, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 82, 84, 0, 18, 52, 86, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 99, 130, 83, 99, 53, 1, 2, 54, 4, 10]]
+extend of [offer1, [0, 2, 2, 1, 4, 255, 255, 255, 0, 3, 4, 10, 0, 2, 2, 6]]
+extend of [offer1, [4, 10, 0, 2, 3, 51, 4, 0, 1, 81, 128, 255, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer1, [0, 0, 0, 0, 0, 0]]
+ack1 is []
+extend of [ack1, [255, 255, 255, 255, 255, 255, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [ack1, [1, 72, 0, 1, 0, 0, 64, 17, 109, 163, 10, 0, 2, 2, 255, 255]]
+extend of [ack1, [255, 255, 0, 67, 0, 68, 1, 52, 0, 221, 2, 1, 6, 0, 0, 50]]
+extend of [ack1, [69, 84, 0, 0, 128, 0, 0, 0, 0, 0, 10, 0, 2, 15, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 82, 84, 0, 18, 52, 86, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 99, 130, 83, 99, 53, 1, 5, 54, 4, 10]]
+extend of [ack1, [0, 2, 2, 1, 4, 255, 255, 255, 0, 3, 4, 10, 0, 2, 2, 6]]
+extend of [ack1, [4, 10, 0, 2, 3, 51, 4, 0, 1, 81, 128, 255, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack1, [0, 0, 0, 0, 0, 0]]
+want_discover1 is []
+extend of [want_discover1, [255, 255, 255, 255, 255, 255, 82, 84, 0, 18, 52, 86, 8, 0, 69, 0]]
+extend of [want_discover1, [1, 72, 0, 1, 0, 0, 64, 17, 121, 165, 0, 0, 0, 0, 255, 255]]
+extend of [want_discover1, [255, 255, 0, 68, 0, 67, 1, 52, 130, 95, 1, 1, 6, 0, 0, 50]]
+extend of [want_discover1, [69, 84, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 82, 84, 0, 18, 52, 86, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 99, 130, 83, 99, 53, 1, 1, 55, 5, 1]]
+extend of [want_discover1, [3, 6, 51, 54, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_discover1, [0, 0, 0, 0, 0, 0]]
+want_request1 is []
+extend of [want_request1, [255, 255, 255, 255, 255, 255, 82, 84, 0, 18, 52, 86, 8, 0, 69, 0]]
+extend of [want_request1, [1, 72, 0, 2, 0, 0, 64, 17, 121, 164, 0, 0, 0, 0, 255, 255]]
+extend of [want_request1, [255, 255, 0, 68, 0, 67, 1, 52, 102, 223, 1, 1, 6, 0, 0, 50]]
+extend of [want_request1, [69, 84, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 82, 84, 0, 18, 52, 86, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 99, 130, 83, 99, 53, 1, 3, 50, 4, 10]]
+extend of [want_request1, [0, 2, 15, 54, 4, 10, 0, 2, 2, 55, 5, 1, 3, 6, 51, 54]]
+extend of [want_request1, [255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [want_request1, [0, 0, 0, 0, 0, 0]]
+offer2 is []
+extend of [offer2, [255, 255, 255, 255, 255, 255, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [offer2, [1, 72, 0, 1, 0, 0, 64, 17, 109, 163, 10, 0, 2, 2, 255, 255]]
+extend of [offer2, [255, 255, 0, 67, 0, 68, 1, 52, 3, 171, 2, 1, 6, 0, 0, 100]]
+extend of [offer2, [69, 84, 0, 0, 128, 0, 0, 0, 0, 0, 10, 0, 2, 15, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 82, 84, 0, 18, 52, 86, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 99, 130, 83, 99, 53, 1, 2, 54, 4, 10]]
+extend of [offer2, [0, 2, 2, 1, 4, 255, 255, 255, 0, 3, 4, 10, 0, 2, 2, 6]]
+extend of [offer2, [4, 10, 0, 2, 3, 51, 4, 0, 1, 81, 128, 255, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer2, [0, 0, 0, 0, 0, 0]]
+ack2 is []
+extend of [ack2, [255, 255, 255, 255, 255, 255, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [ack2, [1, 72, 0, 1, 0, 0, 64, 17, 109, 163, 10, 0, 2, 2, 255, 255]]
+extend of [ack2, [255, 255, 0, 67, 0, 68, 1, 52, 0, 171, 2, 1, 6, 0, 0, 100]]
+extend of [ack2, [69, 84, 0, 0, 128, 0, 0, 0, 0, 0, 10, 0, 2, 15, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 82, 84, 0, 18, 52, 86, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 99, 130, 83, 99, 53, 1, 5, 54, 4, 10]]
+extend of [ack2, [0, 2, 2, 1, 4, 255, 255, 255, 0, 3, 4, 10, 0, 2, 2, 6]]
+extend of [ack2, [4, 10, 0, 2, 3, 51, 4, 0, 1, 81, 128, 255, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack2, [0, 0, 0, 0, 0, 0]]
+offer_wrongxid is []
+extend of [offer_wrongxid, [255, 255, 255, 255, 255, 255, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [offer_wrongxid, [1, 72, 0, 1, 0, 0, 64, 17, 109, 163, 10, 0, 2, 2, 255, 255]]
+extend of [offer_wrongxid, [255, 255, 0, 67, 0, 68, 1, 52, 3, 120, 2, 1, 6, 0, 0, 151]]
+extend of [offer_wrongxid, [69, 84, 0, 0, 128, 0, 0, 0, 0, 0, 10, 0, 2, 15, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 82, 84, 0, 18, 52, 86, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 99, 130, 83, 99, 53, 1, 2, 54, 4, 10]]
+extend of [offer_wrongxid, [0, 2, 2, 1, 4, 255, 255, 255, 0, 3, 4, 10, 0, 2, 2, 6]]
+extend of [offer_wrongxid, [4, 10, 0, 2, 3, 51, 4, 0, 1, 81, 128, 255, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_wrongxid, [0, 0, 0, 0, 0, 0]]
+offer_badcookie is []
+extend of [offer_badcookie, [255, 255, 255, 255, 255, 255, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [offer_badcookie, [1, 72, 0, 1, 0, 0, 64, 17, 109, 163, 10, 0, 2, 2, 255, 255]]
+extend of [offer_badcookie, [255, 255, 0, 67, 0, 68, 1, 52, 3, 170, 2, 1, 6, 0, 0, 200]]
+extend of [offer_badcookie, [69, 84, 0, 0, 128, 0, 0, 0, 0, 0, 10, 0, 2, 15, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 82, 84, 0, 18, 52, 86, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 99, 130, 83, 0, 53, 1, 2, 54, 4, 10]]
+extend of [offer_badcookie, [0, 2, 2, 1, 4, 255, 255, 255, 0, 3, 4, 10, 0, 2, 2, 6]]
+extend of [offer_badcookie, [4, 10, 0, 2, 3, 51, 4, 0, 1, 81, 128, 255, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_badcookie, [0, 0, 0, 0, 0, 0]]
+offer_noserver is []
+extend of [offer_noserver, [255, 255, 255, 255, 255, 255, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [offer_noserver, [1, 72, 0, 1, 0, 0, 64, 17, 109, 163, 10, 0, 2, 2, 255, 255]]
+extend of [offer_noserver, [255, 255, 0, 67, 0, 68, 1, 52, 16, 105, 2, 1, 6, 0, 0, 250]]
+extend of [offer_noserver, [69, 84, 0, 0, 128, 0, 0, 0, 0, 0, 10, 0, 2, 15, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 82, 84, 0, 18, 52, 86, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 99, 130, 83, 99, 53, 1, 2, 1, 4, 255]]
+extend of [offer_noserver, [255, 255, 0, 3, 4, 10, 0, 2, 2, 51, 4, 0, 1, 81, 128, 255]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer_noserver, [0, 0, 0, 0, 0, 0]]
+offer6 is []
+extend of [offer6, [255, 255, 255, 255, 255, 255, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [offer6, [1, 72, 0, 1, 0, 0, 64, 17, 109, 163, 10, 0, 2, 2, 255, 255]]
+extend of [offer6, [255, 255, 0, 67, 0, 68, 1, 52, 2, 227, 2, 1, 6, 0, 1, 44]]
+extend of [offer6, [69, 84, 0, 0, 128, 0, 0, 0, 0, 0, 10, 0, 2, 15, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 82, 84, 0, 18, 52, 86, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 99, 130, 83, 99, 53, 1, 2, 54, 4, 10]]
+extend of [offer6, [0, 2, 2, 1, 4, 255, 255, 255, 0, 3, 4, 10, 0, 2, 2, 6]]
+extend of [offer6, [4, 10, 0, 2, 3, 51, 4, 0, 1, 81, 128, 255, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer6, [0, 0, 0, 0, 0, 0]]
+nak6 is []
+extend of [nak6, [255, 255, 255, 255, 255, 255, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [nak6, [1, 72, 0, 1, 0, 0, 64, 17, 109, 163, 10, 0, 2, 2, 255, 255]]
+extend of [nak6, [255, 255, 0, 67, 0, 68, 1, 52, 254, 226, 2, 1, 6, 0, 1, 44]]
+extend of [nak6, [69, 84, 0, 0, 128, 0, 0, 0, 0, 0, 10, 0, 2, 15, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 82, 84, 0, 18, 52, 86, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 99, 130, 83, 99, 53, 1, 6, 54, 4, 10]]
+extend of [nak6, [0, 2, 2, 1, 4, 255, 255, 255, 0, 3, 4, 10, 0, 2, 2, 6]]
+extend of [nak6, [4, 10, 0, 2, 3, 51, 4, 0, 1, 81, 128, 255, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [nak6, [0, 0, 0, 0, 0, 0]]
+offer7 is []
+extend of [offer7, [255, 255, 255, 255, 255, 255, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [offer7, [1, 72, 0, 1, 0, 0, 64, 17, 109, 163, 10, 0, 2, 2, 255, 255]]
+extend of [offer7, [255, 255, 0, 67, 0, 68, 1, 52, 2, 177, 2, 1, 6, 0, 1, 94]]
+extend of [offer7, [69, 84, 0, 0, 128, 0, 0, 0, 0, 0, 10, 0, 2, 15, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 82, 84, 0, 18, 52, 86, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 99, 130, 83, 99, 53, 1, 2, 54, 4, 10]]
+extend of [offer7, [0, 2, 2, 1, 4, 255, 255, 255, 0, 3, 4, 10, 0, 2, 2, 6]]
+extend of [offer7, [4, 10, 0, 2, 3, 51, 4, 0, 1, 81, 128, 255, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [offer7, [0, 0, 0, 0, 0, 0]]
+ack_wrongxid is []
+extend of [ack_wrongxid, [255, 255, 255, 255, 255, 255, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [ack_wrongxid, [1, 72, 0, 1, 0, 0, 64, 17, 109, 163, 10, 0, 2, 2, 255, 255]]
+extend of [ack_wrongxid, [255, 255, 0, 67, 0, 68, 1, 52, 255, 175, 2, 1, 6, 0, 1, 95]]
+extend of [ack_wrongxid, [69, 84, 0, 0, 128, 0, 0, 0, 0, 0, 10, 0, 2, 15, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 82, 84, 0, 18, 52, 86, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 99, 130, 83, 99, 53, 1, 5, 54, 4, 10]]
+extend of [ack_wrongxid, [0, 2, 2, 1, 4, 255, 255, 255, 0, 3, 4, 10, 0, 2, 2, 6]]
+extend of [ack_wrongxid, [4, 10, 0, 2, 3, 51, 4, 0, 1, 81, 128, 255, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+extend of [ack_wrongxid, [0, 0, 0, 0, 0, 0]]
+
+print of "=== dhcp twin (DISCOVER/OFFER/REQUEST/ACK vs a scripted server) ==="
+
+# ---- the full handshake ----
+reset of ([frame of offer1, 0, frame of ack1])
+l is dhcp.acquire of 400
+check of ["acquire succeeds", l["ok"], 1]
+check of ["lease ip", l["ip"], [10, 0, 2, 15]]
+check of ["mask", l["mask"], [255, 255, 255, 0]]
+check of ["gateway", l["gw"], [10, 0, 2, 2]]
+check of ["dns", l["dns"], [10, 0, 2, 3]]
+check of ["server id", l["server"], [10, 0, 2, 2]]
+check of ["lease seconds", l["lease"], 86400]
+check of ["lease committed into inet", inet.cfg["ip"], [10, 0, 2, 15]]
+check of ["gateway committed", inet.cfg["gw"], [10, 0, 2, 2]]
+check of ["exactly DISCOVER + REQUEST on the wire", len of t_sent, 2]
+bytes_eq of ["DISCOVER bytes exact (net_tower_vectors.py)", t_sent[0], want_discover1]
+bytes_eq of ["REQUEST bytes exact (option 50 + 54)", t_sent[1], want_request1]
+check of ["lease dict is live module state", dhcp.lease["ip"], [10, 0, 2, 15]]
+
+# ---- the serial-gate verdict string ----
+reset of ([frame of offer2, frame of ack2])
+s is dhcp.acquire_str of 400
+check of ["verdict string exact", s, "lease 10.0.2.15 mask 255.255.255.0 gw 10.0.2.2 dns 10.0.2.3 server 10.0.2.2 for 86400s"]
+
+# ---- planted faults ----
+reset of ([frame of offer_wrongxid])
+l is dhcp.acquire of 100
+check of ["OFFER with wrong xid ignored", l["ok"], 0]
+
+reset of ([frame of offer_badcookie])
+l is dhcp.acquire of 100
+check of ["OFFER with bad magic cookie ignored", l["ok"], 0]
+
+reset of ([frame of offer_noserver])
+l is dhcp.acquire of 100
+check of ["OFFER without a server id not requested", l["ok"], 0]
+
+reset of ([frame of offer6, 0, frame of nak6])
+l is dhcp.acquire of 400
+check of ["NAK fails the acquire honestly", l["ok"], 0]
+
+reset of ([frame of offer7, 0, frame of ack_wrongxid])
+l is dhcp.acquire of 400
+check of ["ACK with wrong xid never commits", l["ok"], 0]
+check of ["failed acquire leaves the config down", inet.cfg["up"], 0]
+check of ["failed acquire leaves lease.ok 0", dhcp.lease["ok"], 0]
+
+print of ""
+if fails == 0:
+    print of "dhcp twin: ALL PASS"
+if fails > 0:
+    print of f"dhcp twin: {str of fails} FAILURE(S)"
+    exit of 1

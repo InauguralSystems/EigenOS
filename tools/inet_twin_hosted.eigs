@@ -1,0 +1,281 @@
+# Hosted twin harness for EigenOS demos/inet.eigs (M13-2 ARP + IPv4).
+# Stubs the frame seam in pure EigenScript, feeds crafted frames, and
+# asserts exact bytes both directions — checksum vectors from RFC 1071
+# and a known-good IPv4 header, expected frames precomputed by
+# tools/net_tower_vectors.py (an independent Python implementation).
+# Every planted fault asserts BOTH the drop and the rx_drops tick.
+# Run from the EigenOS repo root:
+#   (cd demos && eigenscript ../tools/inet_twin_hosted.eigs)
+# (cwd must be demos/ so the module-under-test resolves by stem, the
+# way the ROM bundle serves it on the machine.)
+# Exits nonzero on any failure — run before touching demos/inet.eigs.
+
+t_sent is []            # every net_send frame, captured as a byte list
+t_feed is []            # frames net_recv serves (0 = "nothing pending")
+t_fi is 0
+t_tnow is 0
+
+define net_mac() as:
+    local m is buffer of 6
+    local v is [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]
+    local i is 0
+    loop while i < 6:
+        buf_set of [m, i, v[i]]
+        i is i + 1
+    return m
+
+define net_send(f) as:
+    local n is buf_len of f
+    local l is []
+    local i is 0
+    loop while i < n:
+        append of [l, buf_get of [f, i]]
+        i is i + 1
+    append of [t_sent, l]
+    return 1
+
+define net_recv() as:
+    if t_fi >= (len of t_feed):
+        return null
+    local x is t_feed[t_fi]
+    t_fi is t_fi + 1
+    if (type of x) == "buffer":
+        return x
+    return null
+
+define gfx_delay(ms) as:
+    return 1
+
+define gfx_ticks() as:
+    t_tnow is t_tnow + 50
+    return t_tnow
+
+import inet
+
+fails is 0
+
+define reset(tape) as:
+    t_sent is []
+    t_feed is tape
+    t_fi is 0
+
+define check(tag, got, want) as:
+    if got == want:
+        print of f"  PASS: {tag}"
+    if got != want:
+        print of f"  FAIL: {tag} (got {str of got}, wanted {str of want})"
+        fails is fails + 1
+
+define frame(bytes) as:
+    local f is buffer of (len of bytes)
+    local i is 0
+    loop while i < (len of bytes):
+        buf_set of [f, i, bytes[i]]
+        i is i + 1
+    return f
+
+define extend(dst, xs) as:
+    local i is 0
+    loop while i < (len of xs):
+        append of [dst, xs[i]]
+        i is i + 1
+
+define bytes_eq(tag, got, want) as:
+    if (len of got) != (len of want):
+        check of [tag, len of got, len of want]
+        return 0
+    local bad is 0
+    local i is 0
+    loop while i < (len of want):
+        if got[i] != want[i]:
+            bad is bad + 1
+            print of f"    byte {str of i}: got {str of got[i]}, wanted {str of want[i]}"
+        i is i + 1
+    check of [tag, bad, 0]
+    return 1
+
+print of "=== inet twin (ARP cache + IPv4, vs crafted frames) ==="
+
+# ---- RFC 1071 checksum, pinned vectors ----
+v is frame of [0x00, 0x01, 0xF2, 0x03, 0xF4, 0xF5, 0xF6, 0xF7]
+check of ["RFC 1071 example checksum", inet.csum16 of [v, 0, 8], 0x220D]
+check of ["RFC 1071 example fold-sum", inet.csum_sum of [v, 0, 8], 0xDDF2]
+check of ["odd-length checksum (7 bytes)", inet.csum16 of [v, 0, 7], 0x2304]
+wiki0 is frame of [0x45, 0x00, 0x00, 0x73, 0x00, 0x00, 0x40, 0x00, 0x40, 0x11, 0x00, 0x00, 0xC0, 0xA8, 0x00, 0x01, 0xC0, 0xA8, 0x00, 0xC7]
+check of ["known-good IPv4 header checksum", inet.csum16 of [wiki0, 0, 20], 0xB861]
+wiki1 is frame of [0x45, 0x00, 0x00, 0x73, 0x00, 0x00, 0x40, 0x00, 0x40, 0x11, 0xB8, 0x61, 0xC0, 0xA8, 0x00, 0x01, 0xC0, 0xA8, 0x00, 0xC7]
+check of ["intact header verifies to 0xFFFF", inet.csum_sum of [wiki1, 0, 20], 0xFFFF]
+
+# ---- byte helpers ----
+hb is buffer of 4
+inet.be16put of [hb, 0, 0xBEEF]
+check of ["be16 round trip", inet.be16get of [hb, 0], 0xBEEF]
+inet.be16put of [hb, 2, 0x0102]
+check of ["be32get", inet.be32get of [hb, 0], 0xBEEF0102]
+
+# ---- configure ----
+check of ["configure returns haveip", inet.configure of [[10, 0, 2, 15], [255, 255, 255, 0], [10, 0, 2, 2]], 1]
+check of ["cfg committed", inet.cfg["ip"], [10, 0, 2, 15]]
+
+# ---- ARP: resolve miss -> exact who-has on the wire ----
+reset of ([])
+r is inet.arp_resolve of [[10, 0, 2, 2], 100]
+check of ["resolve on silence times out (0)", type of r, "num"]
+check of ["timeout sent exactly one who-has", len of t_sent, 1]
+want is []
+extend of [want, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]]
+extend of [want, [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]]
+extend of [want, [0x08, 0x06, 0x00, 0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x01]]
+extend of [want, [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]]
+extend of [want, [10, 0, 2, 15]]
+extend of [want, [0, 0, 0, 0, 0, 0]]
+extend of [want, [10, 0, 2, 2]]
+bytes_eq of ["who-has bytes exact (RFC 826, sender = lease)", t_sent[0], want]
+
+# ---- ARP: reply arrives -> cached; second resolve is silent ----
+arpreply is []
+extend of [arpreply, [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]]
+extend of [arpreply, [0x52, 0x55, 0x0A, 0x00, 0x02, 0x02]]
+extend of [arpreply, [0x08, 0x06, 0x00, 0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x02]]
+extend of [arpreply, [0x52, 0x55, 0x0A, 0x00, 0x02, 0x02]]
+extend of [arpreply, [10, 0, 2, 2]]
+extend of [arpreply, [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]]
+extend of [arpreply, [10, 0, 2, 15]]
+reset of ([0, frame of arpreply])
+r is inet.arp_resolve of [[10, 0, 2, 2], 500]
+check of ["reply resolves to the responder MAC", r, [0x52, 0x55, 0x0A, 0x00, 0x02, 0x02]]
+reset of ([])
+r is inet.arp_resolve of [[10, 0, 2, 2], 100]
+check of ["second resolve hits the CACHE", r, [0x52, 0x55, 0x0A, 0x00, 0x02, 0x02]]
+check of ["cache hit sent nothing", len of t_sent, 0]
+
+# ---- ARP: who-has us -> exact reply; who-has other -> silence ----
+whohas is []
+extend of [whohas, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]]
+extend of [whohas, [0x02, 0xAA, 0xBB, 0xCC, 0xDD, 0x01]]
+extend of [whohas, [0x08, 0x06, 0x00, 0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x01]]
+extend of [whohas, [0x02, 0xAA, 0xBB, 0xCC, 0xDD, 0x01]]
+extend of [whohas, [10, 0, 2, 99]]
+extend of [whohas, [0, 0, 0, 0, 0, 0]]
+extend of [whohas, [10, 0, 2, 15]]
+reset of ([frame of whohas])
+inet.pump of []
+check of ["who-has us answered with one reply", len of t_sent, 1]
+want is []
+extend of [want, [0x02, 0xAA, 0xBB, 0xCC, 0xDD, 0x01]]
+extend of [want, [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]]
+extend of [want, [0x08, 0x06, 0x00, 0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x02]]
+extend of [want, [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]]
+extend of [want, [10, 0, 2, 15]]
+extend of [want, [0x02, 0xAA, 0xBB, 0xCC, 0xDD, 0x01]]
+extend of [want, [10, 0, 2, 99]]
+bytes_eq of ["ARP reply bytes exact", t_sent[0], want]
+check of ["the asker was cached too", inet.arp_lookup of ([10, 0, 2, 99]), [0x02, 0xAA, 0xBB, 0xCC, 0xDD, 0x01]]
+
+otherhas is []
+extend of [otherhas, whohas]
+otherhas[41] is 77                       # who-has 10.0.2.77, not us
+reset of ([frame of otherhas])
+inet.pump of []
+check of ["who-has someone else: no reply", len of t_sent, 0]
+
+d0 is inet.stats["drops"]
+reset of ([frame of [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 1, 2, 3, 4, 5, 6, 0x08, 0x06, 0, 1]])
+inet.pump of []
+check of ["truncated ARP dropped + counted", inet.stats["drops"] - d0, 1.0]
+
+# ---- IPv4 RX: a valid ICMP frame reaches the queue ----
+# (frame precomputed by net_tower_vectors.py: echo reply, ident 777)
+goodicmp is []
+define mk_goodicmp() as:
+    local want is goodicmp
+    extend of [want, [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+    extend of [want, [0, 60, 3, 9, 0, 0, 64, 1, 95, 168, 10, 0, 2, 2, 10, 0]]
+    extend of [want, [2, 15, 0, 0, 199, 180, 69, 71, 0, 1, 32, 33, 34, 35, 36, 37]]
+    extend of [want, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53]]
+    extend of [want, [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]]
+mk_goodicmp of []
+reset of ([frame of goodicmp])
+inet.pump of []
+e is inet.icmp_take of []
+check of ["valid ICMP frame queued", type of e, "dict"]
+check of ["queued source ip", e["ip"], [10, 0, 2, 2]]
+check of ["queued segment length (IP payload, not padding)", buf_len of e["seg"], 40]
+check of ["queue drained -> null", type of (inet.icmp_take of []), "none"]
+
+# ---- IPv4 planted faults: each dropped AND counted ----
+define fault(tag, bytes) as:
+    local d is inet.stats["drops"]
+    reset of ([frame of bytes])
+    inet.pump of []
+    local q is inet.icmp_take of []
+    if (type of q) != "none":
+        check of [f"{tag} (leaked to queue!)", 1, 0]
+        return 0
+    check of [tag, inet.stats["drops"] - d, 1.0]
+
+bad is []
+extend of [bad, goodicmp]
+bad[24] is 0xEE                          # corrupt one header byte
+fault of ["bad IP header checksum dropped", bad]
+
+bad is []
+extend of [bad, goodicmp]
+bad[14] is 0x65                          # version 6
+fault of ["wrong IP version dropped", bad]
+
+bad is []
+extend of [bad, goodicmp]
+bad[20] is 0x20                          # MF flag set
+bad[24] is 0                             # re-checksum: 0x5F68+0x2000
+bad[25] is 0
+csum is inet.csum16 of [frame of bad, 14, 20]
+lo is csum % 256
+bad[24] is (csum - lo) / 256
+bad[25] is lo
+fault of ["fragment dropped by design", bad]
+
+bad is []
+extend of [bad, goodicmp]
+bad[33] is 99                            # dst 10.0.2.99: not us
+csum is inet.csum16 of [frame of ([bad[14], bad[15], bad[16], bad[17], bad[18], bad[19], bad[20], bad[21], bad[22], bad[23], 0, 0, bad[26], bad[27], bad[28], bad[29], bad[30], bad[31], bad[32], bad[33]]), 0, 20]
+lo is csum % 256
+bad[24] is (csum - lo) / 256
+bad[25] is lo
+fault of ["wrong destination ip dropped", bad]
+
+shortf is [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0, 0, 4]
+fault of ["truncated IP frame dropped", shortf]
+
+# ---- IPv4 TX: pinned frame bytes (ident 1: first ip_send here) ----
+reset of ([])
+seg is frame of [72, 73, 33, 33, 33]      # "HI!!!" as protocol 61
+check of ["ip_send returns 1", inet.ip_send of [[10, 0, 2, 2], 61, seg], 1]
+check of ["unicast send: exactly one frame (ARP was cached)", len of t_sent, 1]
+want is []
+extend of [want, [82, 85, 10, 0, 2, 2, 82, 84, 0, 18, 52, 86, 8, 0, 69, 0]]
+extend of [want, [0, 25, 0, 1, 0, 0, 64, 61, 98, 151, 10, 0, 2, 15, 10, 0]]
+extend of [want, [2, 2, 72, 73, 33, 33, 33]]
+bytes_eq of ["ip_send frame bytes exact (net_tower_vectors.py)", t_sent[0], want]
+
+# ---- broadcast + off-subnet routing ----
+reset of ([])
+inet.ip_send of [[255, 255, 255, 255], 61, seg]
+check of ["broadcast needs no ARP: one frame", len of t_sent, 1]
+b is t_sent[0]
+check of ["broadcast dst MAC", [b[0], b[1], b[2], b[3], b[4], b[5]], [255, 255, 255, 255, 255, 255]]
+check of ["broadcast dst ip", [b[30], b[31], b[32], b[33]], [255, 255, 255, 255]]
+
+reset of ([])
+inet.ip_send of [[8, 8, 8, 8], 61, seg]
+check of ["off-subnet: routed via the gateway MAC", len of t_sent, 1]
+b is t_sent[0]
+check of ["gateway MAC on an off-subnet dst", [b[0], b[1], b[2], b[3], b[4], b[5]], [0x52, 0x55, 0x0A, 0x00, 0x02, 0x02]]
+check of ["ip dst stays the real target", [b[30], b[31], b[32], b[33]], [8, 8, 8, 8]]
+
+print of ""
+if fails == 0:
+    print of "inet twin: ALL PASS"
+if fails > 0:
+    print of f"inet twin: {str of fails} FAILURE(S)"
+    exit of 1

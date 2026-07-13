@@ -817,15 +817,73 @@ upstream, never worked around.
           T3200 (no 8254x) the verdict reads "no supported NIC",
           honestly; its Marvell/Realtek-class NIC is a driver for
           the day real hardware demands it.
-    - [ ] **M13-2 — the protocol tower in script.** ARP as a cache,
-          IPv4/ICMP, UDP, DHCP against slirp — pure `.eigs` layers on
-          the frame seam (net.eigs already holds the crafting/parsing
-          idiom), twin-gated like regionfs/kbd. The observer angle:
-          RTT/loss as observed bindings. Then TCP or the carved
-          ext_http builtins re-backed onto sockets-in-script — decide
-          when the tower is tall enough to carry it. The gdb remote
-          stub over the NIC (M7's debugging upgrade) also becomes
-          possible here.
+    - [x] **M13-2 — the protocol tower in script (DONE 2026-07-13).**
+          ARP as a cache, IPv4 (+ICMP echo), UDP, and a DHCP client —
+          four lib-shaped `.eigs` modules on the frame seam, every
+          packet crafted AND parsed byte-by-byte in script:
+          `demos/inet.eigs` (byte helpers, RFC 1071 checksums, the
+          ARP cache + responder, IPv4 craft/parse with header-checksum
+          verify, fragment-drop-by-design, and the single cooperative
+          RX pump that demuxes into per-protocol queues — the whole
+          tower stays on the M11 tape through one net_recv reader),
+          `demos/icmp.eigs` (ping + echo responder; **rtt and loss
+          are OBSERVED bindings** sampled per ping — `stable of rtt`
+          is "the link settled", the M8-vitals pattern pointed at a
+          wire), `demos/udp.eigs` (pseudo-header checksums both
+          directions, RFC 768 zero-checksum rule, port demux, probe +
+          echo_serve), `demos/dhcp.eigs` (DISCOVER/OFFER/REQUEST/ACK
+          with bounded re-DISCOVER; the xid derives from gfx_ticks —
+          a TAPED source — so a journaled acquire replays with
+          identical bytes; the lease commits into inet and the
+          machine routes with it). Cross-file module state rides in
+          field-written dicts (the SPEC module-write-boundary
+          pattern); building this surfaced upstream **#589** (module
+          TOP-LEVEL assignments bind through to same-named importer
+          globals — module state hijacked; functions were fixed by
+          #373, top-level was not). Verification, the M13-1 bar at
+          every level: (a) per-layer hosted twins
+          (`tools/{inet,icmp,udp,dhcp}_twin_hosted.eigs`, ~100
+          checks, planted faults validated BOTH ways — bad IP/ICMP/
+          UDP checksums, wrong version/dst/port/id/xid, fragments,
+          bad cookie, missing server-id, NAK) pinned byte-for-byte
+          against `tools/net_tower_vectors.py`, an independent Python
+          implementation (RFC 1071's own example = 0x220D, the
+          classic known-good IPv4 header = 0xB861); (b) boot serial
+          gates under slirp: the machine leases 10.0.2.15 through its
+          own DHCP handshake (the handshake IS the boot-time UDP
+          proof, both directions) and pings its LEASED gateway (3/3,
+          loss 0) — honest "no offer within bound" on a responderless
+          backend, eval errors still fail the ladder; (c) external
+          `tools/net_frames.py` phases C/D: DISCOVER/REQUEST captured
+          in the pcap byte-exact (xid read off the wire, idents known
+          by construction), ICMP echo requests byte-exact with
+          slirp's replies beside them, a REPL-driven `udp.probe`
+          reaching a REAL host UDP socket through slirp (payload
+          exact, every checksum recomputed outside) — and on a
+          `-netdev dgram` pair the tower SERVES injected traffic:
+          ARP who-has answered byte-exact, a crafted echo request
+          answered checksum-valid, an injected datagram echoed with
+          ports mirrored; (d) the tape gate `tools/net_tape_replay.py`:
+          a recorded ARP+DHCP+ICMP+UDP session replays on a
+          provably-silent wire reproducing the lease line, the
+          rtt/loss line (gfx_ticks rides the tape — the RTT number
+          itself reproduces), and the UDP reply, byte-identically.
+          Building (d) fixed a latent M11 substrate bug the light
+          M13-1 tape never exposed (KNOWN_ISSUES): the journal stored
+          the runtime's full per-line `L` trace, so a heavy session's
+          tape ran ~57 KB and would not persist through the
+          pure-script store under TCG — the sink now keeps only the
+          `I`/`N`/`V` records replay actually consumes (57 KB → 3.8 KB
+          for DHCP, 140 s → 12 s to write), and the auto-ring slide no
+          longer decapitates the tape's version header.
+          **TCP decision point (deliberately open):** TCP-in-script
+          vs re-backing the carved ext_http builtins onto
+          sockets-in-script. Neither is built until a consumer needs
+          a byte stream — the two candidates are the gdb remote stub
+          over the NIC (M7's debugging upgrade; datagram-friendly,
+          may not need TCP at all) and ext_http freestanding (needs
+          real TCP). Decide when one of them is actually scheduled;
+          the tower now carries everything below it either way.
 - [ ] **M14 candidate — preemption / hung-eval recovery.** Quantified
       evidence from the solver window (the first real application):
       `task_spawn` of the 64 KB win_sat module compiles synchronously

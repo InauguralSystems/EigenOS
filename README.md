@@ -27,6 +27,34 @@ Developed and tested under QEMU first.
 
 ## Status
 
+**Milestone-13-2 (done): the protocol tower in script.** ARP-as-a-
+cache, IPv4 (+ICMP echo), UDP, and a DHCP client — four `.eigs`
+modules layered on the M13-1 frame seam, every packet crafted AND
+parsed byte-by-byte in EigenScript (`demos/inet.eigs`, `icmp.eigs`,
+`udp.eigs`, `dhcp.eigs`; RFC 1071 checksums pinned against the RFC's
+own example and known-good vectors). The observer IS the network
+instrumentation: `rtt` and `loss` are plain observed bindings sampled
+per ping — `stable of rtt` is "the link settled", no counters or
+histograms needed (the M8-vitals pattern pointed at a wire). At boot,
+under slirp, the machine leases 10.0.2.15 through its own DHCP
+handshake (the handshake is itself the UDP proof, both directions)
+and pings its leased gateway — both serial gates. Cross-file module
+state rides in dicts (the SPEC's module write boundary); building
+this surfaced upstream #589 (module top-level assignments leak into
+same-named importer globals). Proven at four levels: per-layer hosted
+twins with planted faults (bad checksums, wrong ports, wrong xid,
+NAK, fragments — ~100 checks, checkers validated both ways), external
+pcap validation against an independent Python implementation
+(`tools/net_tower_vectors.py`), byte-exact injection serving (ARP
+reply, ICMP echo reply, UDP echo on a `-netdev dgram` pair), and the
+tape gate: a recorded ARP+DHCP+ICMP+UDP session replays on a
+provably-silent wire reproducing the lease line, the rtt/loss line
+(gfx_ticks rides the tape — even the RTT number reproduces), and the
+UDP reply byte-identically. TCP is deliberately NOT built yet — the
+decision point (TCP in script vs re-backing the carved ext_http onto
+sockets-in-script) waits for the first consumer that needs a byte
+stream (ROADMAP).
+
 **Milestone-13-1 (done): the frame seam — the machine is on the
 wire.** An Intel 8254x (e1000) driver, the OS's first real MMIO
 device: `src/e1000.c` finds it over PCI config mechanism #1, maps
@@ -51,9 +79,9 @@ planted-fault validated), and the external harness
 `tools/net_frames.py` — the guest's ARP request captured byte-exact
 in a filter-dump pcap, and a frame injected over a `-netdev dgram`
 UDP pair echoed back byte-exact (MACs swapped) through REPL-driven
-`net.echo_wait`. M13-2 (ARP cache/IP/UDP as script layers) is next;
-on the T3200 the verdict honestly reads "no supported NIC" until a
-driver for its real NIC earns its keep.
+`net.echo_wait`. The M13-2 tower now stands on this seam; on the
+T3200 the verdict honestly reads "no supported NIC" until a driver
+for its real NIC earns its keep.
 
 **Milestone-12 (done): devices in EigenScript.** The keyboard driver
 is now a `.eigs` program. Three layers, each proven at boot and live:
@@ -327,8 +355,11 @@ rejects ELF64, so GRUB does the loading.
   `net_recv` on the journal tape; proven by PHY loopback, a slirp
   ARP round-trip, an external pcap capture, and byte-exact frame
   injection (`tools/net_frames.py`)
-- [ ] **M13-2** — the protocol tower in script (ARP cache, IPv4,
-  UDP, DHCP; then TCP/HTTP when the tower can carry it)
+- [x] **M13-2** — the protocol tower in script: ARP cache, IPv4 +
+  ICMP echo, UDP, DHCP as twin-gated `.eigs` layers on the frame
+  seam; rtt/loss as observed bindings; DHCP lease + gateway echo as
+  boot gates; pcap/injection/tape external proofs (TCP deferred to
+  its first consumer — the decision point is in ROADMAP)
 
 ## License
 

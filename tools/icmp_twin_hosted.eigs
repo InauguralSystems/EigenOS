@@ -1,0 +1,200 @@
+# Hosted twin harness for EigenOS demos/icmp.eigs (M13-2 ICMP echo).
+# Stubs the frame seam, feeds crafted frames (bytes precomputed by
+# tools/net_tower_vectors.py — an independent Python implementation),
+# and asserts the exact echo-request bytes, the RTT/loss OBSERVED
+# bindings, the echo responder, and the planted faults (bad ICMP
+# checksum / wrong id / wrong source each read as loss, never as a
+# reply). Run from the EigenOS repo root:
+#   (cd demos && eigenscript ../tools/icmp_twin_hosted.eigs)
+# Exits nonzero on any failure — run before touching demos/icmp.eigs.
+
+t_sent is []            # every net_send frame, captured as a byte list
+t_feed is []            # frames net_recv serves (0 = "nothing pending")
+t_fi is 0
+t_tnow is 0
+
+define net_mac() as:
+    local m is buffer of 6
+    local v is [0x52, 0x54, 0x00, 0x12, 0x34, 0x56]
+    local i is 0
+    loop while i < 6:
+        buf_set of [m, i, v[i]]
+        i is i + 1
+    return m
+
+define net_send(f) as:
+    local n is buf_len of f
+    local l is []
+    local i is 0
+    loop while i < n:
+        append of [l, buf_get of [f, i]]
+        i is i + 1
+    append of [t_sent, l]
+    return 1
+
+define net_recv() as:
+    if t_fi >= (len of t_feed):
+        return null
+    local x is t_feed[t_fi]
+    t_fi is t_fi + 1
+    if (type of x) == "buffer":
+        return x
+    return null
+
+define gfx_delay(ms) as:
+    return 1
+
+define gfx_ticks() as:
+    t_tnow is t_tnow + 50
+    return t_tnow
+
+fails is 0
+
+define reset(tape) as:
+    t_sent is []
+    t_feed is tape
+    t_fi is 0
+
+define check(tag, got, want) as:
+    if got == want:
+        print of f"  PASS: {tag}"
+    if got != want:
+        print of f"  FAIL: {tag} (got {str of got}, wanted {str of want})"
+        fails is fails + 1
+
+define frame(bytes) as:
+    local f is buffer of (len of bytes)
+    local i is 0
+    loop while i < (len of bytes):
+        buf_set of [f, i, bytes[i]]
+        i is i + 1
+    return f
+
+define extend(dst, xs) as:
+    local i is 0
+    loop while i < (len of xs):
+        append of [dst, xs[i]]
+        i is i + 1
+
+define bytes_eq(tag, got, want) as:
+    if (len of got) != (len of want):
+        check of [tag, len of got, len of want]
+        return 0
+    local bad is 0
+    local i is 0
+    loop while i < (len of want):
+        if got[i] != want[i]:
+            bad is bad + 1
+            print of f"    byte {str of i}: got {str of got[i]}, wanted {str of want[i]}"
+        i is i + 1
+    check of [tag, bad, 0]
+    return 1
+
+import icmp
+import inet
+
+arp_reply_gw is []
+extend of [arp_reply_gw, [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 6, 0, 1]]
+extend of [arp_reply_gw, [8, 0, 6, 4, 0, 2, 82, 85, 10, 0, 2, 2, 10, 0, 2, 2]]
+extend of [arp_reply_gw, [82, 84, 0, 18, 52, 86, 10, 0, 2, 15]]
+reply_seq1 is []
+extend of [reply_seq1, [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [reply_seq1, [0, 60, 3, 9, 0, 0, 64, 1, 95, 168, 10, 0, 2, 2, 10, 0]]
+extend of [reply_seq1, [2, 15, 0, 0, 199, 180, 69, 71, 0, 1, 32, 33, 34, 35, 36, 37]]
+extend of [reply_seq1, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53]]
+extend of [reply_seq1, [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]]
+reply_wrongid is []
+extend of [reply_wrongid, [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [reply_wrongid, [0, 60, 3, 9, 0, 0, 64, 1, 95, 168, 10, 0, 2, 2, 10, 0]]
+extend of [reply_wrongid, [2, 15, 0, 0, 115, 97, 153, 153, 0, 2, 32, 33, 34, 35, 36, 37]]
+extend of [reply_wrongid, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53]]
+extend of [reply_wrongid, [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]]
+reply_badcsum is []
+extend of [reply_badcsum, [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [reply_badcsum, [0, 60, 3, 9, 0, 0, 64, 1, 95, 168, 10, 0, 2, 2, 10, 0]]
+extend of [reply_badcsum, [2, 15, 0, 0, 199, 178, 69, 71, 0, 3, 223, 33, 34, 35, 36, 37]]
+extend of [reply_badcsum, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53]]
+extend of [reply_badcsum, [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]]
+reply_wrongsrc is []
+extend of [reply_wrongsrc, [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [reply_wrongsrc, [0, 60, 3, 9, 0, 0, 64, 1, 95, 167, 10, 0, 2, 3, 10, 0]]
+extend of [reply_wrongsrc, [2, 15, 0, 0, 199, 177, 69, 71, 0, 4, 32, 33, 34, 35, 36, 37]]
+extend of [reply_wrongsrc, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53]]
+extend of [reply_wrongsrc, [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]]
+echo_req is []
+extend of [echo_req, [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [echo_req, [0, 42, 3, 132, 0, 0, 64, 1, 95, 63, 10, 0, 2, 2, 10, 0]]
+extend of [echo_req, [2, 15, 8, 0, 78, 252, 190, 239, 0, 9, 80, 73, 78, 71, 45, 84]]
+extend of [echo_req, [72, 69, 45, 71, 85, 69, 83, 84]]
+reply_seq5 is []
+extend of [reply_seq5, [82, 84, 0, 18, 52, 86, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]
+extend of [reply_seq5, [0, 60, 3, 9, 0, 0, 64, 1, 95, 168, 10, 0, 2, 2, 10, 0]]
+extend of [reply_seq5, [2, 15, 0, 0, 199, 176, 69, 71, 0, 5, 32, 33, 34, 35, 36, 37]]
+extend of [reply_seq5, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53]]
+extend of [reply_seq5, [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]]
+want_echo_frame is []
+extend of [want_echo_frame, [82, 85, 10, 0, 2, 2, 82, 84, 0, 18, 52, 86, 8, 0, 69, 0]]
+extend of [want_echo_frame, [0, 60, 0, 1, 0, 0, 64, 1, 98, 176, 10, 0, 2, 15, 10, 0]]
+extend of [want_echo_frame, [2, 2, 8, 0, 191, 180, 69, 71, 0, 1, 32, 33, 34, 35, 36, 37]]
+extend of [want_echo_frame, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53]]
+extend of [want_echo_frame, [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]]
+
+print of "=== icmp twin (echo both directions, observed vitals) ==="
+
+inet.configure of [[10, 0, 2, 15], [255, 255, 255, 0], [10, 0, 2, 2]]
+
+# ---- one clean ping: exact request bytes, RTT observed ----
+reset of ([frame of arp_reply_gw, 0, frame of reply_seq1])
+r is icmp.ping of [[10, 0, 2, 2], 500]
+check of ["ping returns the RTT (deterministic tick stub)", r, 50]
+check of ["ping sent who-has then echo request", len of t_sent, 2]
+bytes_eq of ["echo request frame exact (net_tower_vectors.py)", t_sent[1], want_echo_frame]
+c is icmp.counters of []
+check of ["sent counter", c["sent"], 1]
+check of ["got counter", c["got"], 1]
+check of ["rtt sampled into the observed binding", c["rtt"], 50.0]
+check of ["loss 0 after a clean ping", c["loss"], 0.0]
+
+# ---- planted faults: each reads as LOSS, never as a reply ----
+reset of ([frame of reply_wrongid])
+check of ["reply with wrong id ignored (-1)", icmp.ping of [[10, 0, 2, 2], 100], 0 - 1]
+reset of ([frame of reply_badcsum])
+check of ["reply with bad ICMP checksum ignored", icmp.ping of [[10, 0, 2, 2], 100], 0 - 1]
+reset of ([frame of reply_wrongsrc])
+check of ["reply from the wrong host ignored", icmp.ping of [[10, 0, 2, 2], 100], 0 - 1]
+c is icmp.counters of []
+check of ["loss ratio observed (3 lost / 4 sent)", c["loss"], 0.75]
+
+# ---- the echo responder: request in, checksummed reply out ----
+reset of ([frame of echo_req, 0])
+n is icmp.serve of 60
+check of ["serve answered one request", n, 1]
+check of ["serve sent one frame", len of t_sent, 1]
+rep is t_sent[0]
+repb is frame of rep
+check of ["reply is ICMP type 0", rep[34], 0]
+check of ["id echoed", [rep[38], rep[39]], [0xBE, 0xEF]]
+check of ["seq echoed", [rep[40], rep[41]], [0, 9]]
+check of ["reply ICMP checksum verifies", inet.csum_sum of [repb, 34, (len of rep) - 34], 0xFFFF]
+check of ["reply IP header verifies", inet.csum_sum of [repb, 14, 20], 0xFFFF]
+check of ["reply addressed to the pinger", [rep[30], rep[31], rep[32], rep[33]], [10, 0, 2, 2]]
+paysrc is "PING-THE-GUEST"
+bad is 0
+i is 0
+loop while i < (len of paysrc):
+    if rep[42 + i] != (ord of (char_at of [paysrc, i])):
+        bad is bad + 1
+    i is i + 1
+check of ["payload echoed byte-exact", bad, 0]
+
+# ---- ping_str: the verdict carries the observed vitals ----
+reset of ([frame of reply_seq5])
+s is icmp.ping_str of [[10, 0, 2, 2], 1]
+check of ["verdict prefix", index_of of [s, "echo 10.0.2.2 rtt 50 ms loss 0.6 ("], 0]
+
+print of ""
+if fails == 0:
+    print of "icmp twin: ALL PASS"
+if fails > 0:
+    print of f"icmp twin: {str of fails} FAILURE(S)"
+    exit of 1

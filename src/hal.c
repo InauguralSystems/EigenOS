@@ -1082,9 +1082,10 @@ static int g_rp_driving;         /* a session replay is being driven */
 static char **g_rp_lines;
 static int    g_rp_count;
 
-static void jrn_sink(const char *bytes, size_t len, void *ud) {
-    (void)ud;
-    if (g_fsd_busy) return;      /* fs-daemon machinery is not session activity */
+/* Append a run of already-filtered bytes to the ring, with the auto
+ * flight-recorder's newest-half slide. */
+static void jrn_raw_append(const char *bytes, size_t len) {
+    if (!len) return;
     if (g_jrn_len + len > g_jrn_cap) {
         size_t nc = g_jrn_cap ? g_jrn_cap * 2 : 4096;
         while (nc < g_jrn_len + len) nc *= 2;
@@ -1097,8 +1098,15 @@ static void jrn_sink(const char *bytes, size_t len, void *ud) {
     g_jrn_len += len;
     g_jrn_dirty = 1;
     /* ring bound: slide to the newest half, cutting where an I record
-     * starts so the tail replays coherently */
-    if (g_jrn_len > JRN_AUTO_CAP) {
+     * starts so the tail replays coherently. ONLY the auto
+     * flight-recorder slides — it keeps the newest activity for a
+     * crash post-mortem, where losing the tape's leading version
+     * header is acceptable ("autolog" is read best-effort). A MANUAL
+     * journal_on..off bracket must NOT slide: it is a deliberate,
+     * complete session save, and cutting the head would drop the
+     * version header (making the saved "journal" file unreplayable)
+     * plus the early records. */
+    if (!g_jrn_on && g_jrn_len > JRN_AUTO_CAP) {
         size_t cut = 0;
         for (size_t i = g_jrn_len / 2; i + 2 < g_jrn_len; i++)
             if (g_jrn_buf[i] == '\n' && g_jrn_buf[i + 1] == 'I' &&
@@ -1112,6 +1120,57 @@ static void jrn_sink(const char *bytes, size_t len, void *ud) {
             g_jrn_len -= cut;
         }
     }
+}
+
+/* The trace sink, RECORD-FILTERED. The runtime emits per-line `L`
+ * records (and `A`/`S` scope/assignment records) for full-trace
+ * debugging, but the M11 replay path consumes only `N` (nondeterministic
+ * input) and `I` (submitted source) records plus the `V` version
+ * header — the replay-take reader skips everything else, and
+ * journal_replay re-drives the I lines. Storing the L/A/S flood is pure
+ * dead weight: M13-2 surfaced it hard — a single DHCP acquire crafts
+ * and checksums a 300-byte packet across tens of thousands of executed
+ * lines, so the FULL trace ran ~57 KB and took ~140 s to persist
+ * through pure-script regionfs (~400 B/s under TCG), while the same
+ * session's I+N+V content is a few KB. So keep only I/N/V; drop the
+ * rest. Streaming, first-byte-of-line classification (the sink flushes
+ * per record at each newline, but a large N frame record can span
+ * chunks, so the keep/drop decision persists until the next newline —
+ * never re-decided mid-record). */
+static int g_jrn_line_start = 1;   /* next byte begins a fresh record */
+static int g_jrn_line_keep  = 1;   /* keep the record currently streaming */
+
+static void jrn_sink(const char *bytes, size_t len, void *ud) {
+    (void)ud;
+    if (g_fsd_busy) return;      /* fs-daemon machinery is not session activity */
+    size_t run = 0;              /* start of the current kept run in bytes[] */
+    for (size_t i = 0; i < len; i++) {
+        if (g_jrn_line_start) {
+            char c = bytes[i];
+            int keep = (c == 'I' || c == 'N' || c == 'V');
+            if (keep != g_jrn_line_keep) {
+                /* boundary: flush the run accumulated under the old
+                 * decision, then switch */
+                if (g_jrn_line_keep && i > run)
+                    jrn_raw_append(bytes + run, i - run);
+                run = i;
+                g_jrn_line_keep = keep;
+            }
+            g_jrn_line_start = 0;
+        }
+        if (bytes[i] == '\n') g_jrn_line_start = 1;
+    }
+    if (g_jrn_line_keep && len > run)
+        jrn_raw_append(bytes + run, len - run);
+}
+
+/* Install the filtering sink for a fresh tape open. Resets the line
+ * classifier so the newly-emitted V header is seen from a clean line
+ * boundary (kept), and every install emits its own V header. */
+static void jrn_sink_install(void) {
+    g_jrn_line_start = 1;
+    g_jrn_line_keep  = 1;
+    eigs_set_trace_sink(jrn_sink, 0);
 }
 
 /* Flush the ring to the store — called by the REPL loop BETWEEN evals
@@ -1152,7 +1211,7 @@ static EigsValue *b_journal_on(EigsValue *a) {
     g_jrn_len = 0;
     g_jrn_dirty = 0;
     g_jrn_on = 1;
-    eigs_set_trace_sink(jrn_sink, 0);
+    jrn_sink_install();
     serial_write("[m11] journal: recording (inputs + machine readings)\n");
     return eigs_value_new_num(1);
 }
@@ -2277,12 +2336,80 @@ int eigs_run_demo(void) {
         serial_write("[m13] net: skipped (no NIC)\n");
     }
 
+    /* M13-2: the protocol tower in script — dhcp.eigs acquires a
+     * lease through udp.eigs -> inet.eigs -> the frame seam (every
+     * packet crafted AND parsed byte-by-byte in .eigs; the DHCP
+     * handshake itself is the boot-time UDP proof, both directions),
+     * then icmp.eigs pings the LEASED gateway with rtt/loss as
+     * observed bindings. Under QEMU's slirp both succeed and are the
+     * standard-boot serial gates; a present NIC on a responderless
+     * backend reports honestly and does NOT fail the ladder (the
+     * M13-1 rule — the guest cannot observe which backend answers).
+     * An eval ERROR (tower broken) still fails hard. */
+    if (e1000_present()) {
+        EigsValue *v18 = eigs_eval_string(
+            "import dhcp\n"
+            "dhcp.acquire_str of 12000");
+        int twr_err = 0;
+        if (eigs_has_error()) {
+            twr_err = 1;
+            serial_write("[m13-2] dhcp error: ");
+            serial_write(eigs_last_error_message());
+            serial_write("\n");
+            eigs_clear_error();
+        }
+        int have_lease = !twr_err && v18 &&
+                         eigs_value_type(v18) == EIGS_TYPE_STR &&
+                         eigs_value_as_string(v18) &&
+                         eigs_value_as_string(v18)[0];
+        if (have_lease) {
+            serial_write("[m13-2] dhcp: ");
+            serial_write(eigs_value_as_string(v18));
+            serial_write(" (script tower) OK\n");
+        } else if (!twr_err) {
+            serial_write("[m13-2] dhcp: no offer within bound "
+                         "(backend without slirp?) — tower unproven this boot\n");
+        }
+        if (v18) eigs_value_release(v18);
+        if (twr_err) return 0;
+
+        if (have_lease) {
+            EigsValue *v19 = eigs_eval_string(
+                "import dhcp\n"
+                "import icmp\n"
+                "icmp.ping_str of [dhcp.lease[\"gw\"], 3]");
+            if (eigs_has_error()) {
+                twr_err = 1;
+                serial_write("[m13-2] icmp error: ");
+                serial_write(eigs_last_error_message());
+                serial_write("\n");
+                eigs_clear_error();
+            }
+            const char *ps = (!twr_err && v19 &&
+                              eigs_value_type(v19) == EIGS_TYPE_STR)
+                                 ? eigs_value_as_string(v19) : 0;
+            if (ps && ps[0] == 'e') {          /* "echo <gw> rtt ..." */
+                serial_write("[m13-2] icmp: ");
+                serial_write(ps);
+                serial_write(" OK\n");
+            } else if (!twr_err) {
+                serial_write("[m13-2] icmp: ");
+                serial_write(ps && ps[0] ? ps : "no verdict");
+                serial_write(" — gateway echo unproven this boot\n");
+            }
+            if (v19) eigs_value_release(v19);
+            if (twr_err) return 0;
+        }
+    } else {
+        serial_write("[m13-2] tower: skipped (no NIC)\n");
+    }
+
     if (!stack_canary_ok()) {
         serial_write("[mn] PANIC: boot-stack canary trampled during demo\n");
         vga_put_at(19, 0, "MN: STACK CANARY TRAMPLED", 0x4F);
         return 0;
     }
-    serial_write("[mn] stack canary intact after 4 evals OK\n");
+    serial_write("[mn] stack canary intact after the demo evals OK\n");
     vga_put_at(19, 0, "MN: stack canary intact OK", 0x0A);
     return 1;
 }
@@ -2363,7 +2490,7 @@ static void repl_eval(const char *src) {
         repl_show_value(v);
     }
     if (v) eigs_value_release(v);
-    if (jmeta && g_auto_on && !g_jrn_on) eigs_set_trace_sink(jrn_sink, 0);
+    if (jmeta && g_auto_on && !g_jrn_on) jrn_sink_install();
     if (!stack_canary_ok()) {
         con_write("PANIC: boot-stack overflow (canary trampled by that "
                   "eval). Halting.\n");
@@ -2396,7 +2523,7 @@ static void jrn_drive(void) {
     rp_clear();
     eigs_set_replay_tape(0, 0, 0);
     g_rp_driving = 0;
-    if (g_auto_on) eigs_set_trace_sink(jrn_sink, 0);
+    if (g_auto_on) jrn_sink_install();
     con_write("[journal] session replay complete (live readings resume)\n");
 }
 
@@ -2449,7 +2576,7 @@ void eigs_repl(void) {
             con_write("[m11] auto-journal: previous session archived as \"lastboot\"\n");
         } else fsd_leave(back);
         g_auto_on = 1;
-        eigs_set_trace_sink(jrn_sink, 0);
+        jrn_sink_install();
         con_write("[m11] auto-journal: on (ring \"autolog\" in the store)\n");
     }
 

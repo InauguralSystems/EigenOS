@@ -1,0 +1,106 @@
+# UDP in EigenScript (M13-2) — datagrams crafted and parsed byte-by-
+# byte on the inet layer. TX always computes the pseudo-header
+# checksum (RFC 768: a computed 0 transmits as 0xFFFF); RX verify and
+# port demux live in inet.udp_in/udp_take (a bad checksum or a wrong
+# port never reaches a listener).
+#
+#   import udp
+#   udp.send of [[10,0,2,2], 5000, 47000, payload]   # buffer out
+#   d is udp.recv of [5000, 3000]                     # {ip,sport,dport,data} | null
+#   udp.probe of [[10,0,2,2], 47000, 5000]            # fixed probe -> reply string
+#   udp.echo_serve of [47001, 10000]                  # echo datagrams for 10 s
+
+import inet
+
+# Send payload (a buffer) from sport to dip:dport. Returns 1/0.
+define send(dip, sport, dport, payload) as:
+    local dl is buf_len of payload
+    local ul is 8 + dl
+    local ph is buffer of (12 + ul)       # pseudo-header + segment
+    inet.put_bytes of [ph, 0, inet.cfg["ip"]]
+    inet.put_bytes of [ph, 4, dip]
+    buf_set of [ph, 8, 0]
+    buf_set of [ph, 9, 17]
+    inet.be16put of [ph, 10, ul]
+    inet.be16put of [ph, 12, sport]
+    inet.be16put of [ph, 14, dport]
+    inet.be16put of [ph, 16, ul]
+    inet.be16put of [ph, 18, 0]           # checksum slot
+    if dl > 0:
+        buf_copy of [payload, 0, ph, 20, dl]
+    local c is inet.csum16 of [ph, 0, 12 + ul]
+    if c == 0:
+        c is 0xFFFF                       # RFC 768: 0 means "no checksum"
+    local seg is buffer of ul
+    buf_copy of [ph, 12, seg, 0, ul]
+    inet.be16put of [seg, 6, c]
+    return inet.ip_send of [dip, 17, seg]
+
+# Next datagram addressed to port within ms (count-bounded polling).
+# Returns {ip, sport, dport, data} or null.
+define recv(port, ms) as:
+    local d is inet.udp_take of (port)
+    if (type of d) == "dict":
+        return d
+    local tries is 0
+    local bound is ms / 30
+    loop while tries < bound:
+        inet.pump of []
+        d is inet.udp_take of (port)
+        if (type of d) == "dict":
+            return d
+        gfx_delay of 30
+        tries is tries + 1
+    return null
+
+define str_of_buf(b) as:
+    local s is ""
+    local i is 0
+    loop while i < (buf_len of b):
+        s is s + (chr of (buf_get of [b, i]))
+        i is i + 1
+    return s
+
+define buf_of_str(s) as:
+    local n is len of s
+    local b is buffer of n
+    local i is 0
+    loop while i < n:
+        buf_set of [b, i, ord of (char_at of [s, i])]
+        i is i + 1
+    return b
+
+# One fixed probe datagram to dip:dport from local port sport, reply
+# awaited (spaced re-sends across the receiver spin-up horizon, the
+# 6529b9e rule). Returns the reply payload as a string, "" on silence.
+define probe(dip, dport, sport) as:
+    local pay is buf_of_str of "EIGENOS-M13-2-UDP"
+    local tries is 0
+    loop while tries < 200:
+        if (tries % 33) == 0:
+            send of [dip, sport, dport, pay]
+        inet.pump of []
+        local d is inet.udp_take of (sport)
+        if (type of d) == "dict":
+            return str_of_buf of (d["data"])
+        gfx_delay of 30
+        tries is tries + 1
+    return ""
+
+# Echo every datagram on port back to its sender for ms milliseconds
+# (payload unmodified, ports mirrored). The guest half of the external
+# byte-exact UDP proof. Returns how many were echoed.
+define echo_serve(port, ms) as:
+    local nech is 0
+    local tries is 0
+    local bound is ms / 30
+    loop while tries < bound:
+        inet.pump of []
+        local d is inet.udp_take of (port)
+        loop while (type of d) == "dict":
+            if (send of [d["ip"], port, d["sport"], d["data"]]) == 1:
+                nech is nech + 1
+            d is inet.udp_take of (port)
+        gfx_delay of 30
+        tries is tries + 1
+    return nech

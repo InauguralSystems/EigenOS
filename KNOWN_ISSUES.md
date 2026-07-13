@@ -2,6 +2,49 @@
 
 (none open)
 
+## RESOLVED — M13-2: the journal recorded the full L-record trace, making heavy sessions unpersistable
+
+**Symptom.** The M13-2 tape-replay gate (`tools/net_tape_replay.py`)
+recorded a full ARP+DHCP+ICMP+UDP session, then `journal_off` never
+printed its "written to the store" verdict — the write hung for minutes
+and the session never persisted, so boot 2 had nothing to replay. The
+M13-1 single-`arp_probe` tape had always written instantly.
+
+**Root cause (found 2026-07-13).** The M11 journal sink stored EVERY
+record the trace engine emits, including one `L <line>` record per
+executed script line (`trace_line` in EigenScript `src/trace.c`). A
+single `dhcp.acquire` crafts and checksums a 300-byte packet across tens
+of thousands of executed lines, so the FULL trace ran ~57 KB for DHCP
+alone; persisting it through the pure-EigenScript regionfs store under
+TCG runs at ~400 B/s (~140 s), and a three-protocol session was several
+times worse. The M11 replay path never needed the `L`/`A`/`S` records —
+`journal_replay` re-drives the `I` (input) records and the replay-take
+reader consumes only `N` (nondeterministic input) records plus the `V`
+version header; everything else was dead weight.
+
+**Fix (`src/hal.c`, `jrn_sink`).** The journal sink now streams
+record-filtered: it keeps only `I`/`N`/`V` lines and drops the `L`/`A`/`S`
+trace flood (first-byte-of-line classification, persisted across chunk
+boundaries so a large multi-chunk `N` frame record is never split). The
+same DHCP tape dropped 57 KB → 3.8 KB and its write 140 s → 12 s; the
+full three-protocol session now persists in seconds and replays
+byte-identically. A latent second bug fixed alongside: the auto ring's
+newest-half slide was cutting the tape's leading `V` header (any
+`autolog` larger than 64 KB would have been rejected as "no version
+header" on crash replay) — the slide now runs only for the auto ring,
+never a manual `journal_on..off` bracket, and the filtered records keep
+even a full session comfortably inside the bound.
+
+**Note (test-side, same milestone).** Byte-identical replay of the ICMP
+leg also required `icmp.reset` (zero the cumulative `sent`/`got`/`rtt`/
+`ping_seq`) and `inet.arp_flush` to be re-driven inside the recorded
+session: the record boot's self-test warms the icmp counters and the
+inet ARP cache, but the replay boot skips the icmp gate (no lease), so
+without the reset the replayed ping sends a different sequence number
+and the ip_send takes a different (cold-ARP) `net_recv` path, diverging
+the tape. Live module state that a session's `net_recv` order depends on
+must be reset inside the recorded session.
+
 ## RESOLVED — M5/MN: layout-sensitive crash in the freestanding runtime
 
 **Symptom (historical).** After the first one or two `eigs_eval_string`
