@@ -1,0 +1,69 @@
+# editwin — the EigenOS desktop window body for eigen-edit.
+#
+# NOT a standalone module: build/gen/win_edit.eigs concatenates
+# ../eigen-edit/edit.eigs (byte-unmodified) + this file, the tidefs /
+# win_sat pattern. `import win_edit` gets the whole editor; this file is
+# filtered OUT of the bundle wildcard. EigenOS is a CONSUMER of eigen-edit,
+# not its owner — the buffer core lives in and is versioned by the
+# eigen-edit repo, and this file only supplies the OS-side front-end
+# (the SDL `run` in edit.eigs is present but never called here).
+#
+# The WM forwards focused-window keystrokes as ASCII/KEY_* codes via
+# task_key -> win_key (kbd.eigs's map: Enter=10, Backspace=8, Tab=9,
+# arrows=0x80/0x81/0x82/0x83, home=0x84, end=0x85, delete=0x86). Each
+# code translates onto the editor core's primitives; nothing about the
+# buffer model is reimplemented here.
+
+doc is new_doc of null
+progress is 0.0
+
+define _handle(code) as:
+    if code == 10:
+        newline of doc
+    elif code == 13:
+        newline of doc
+    elif code == 8:
+        backspace of doc
+    elif code == 127:
+        backspace of doc
+    elif code == 9:
+        insert_str of [doc, "    "]
+    elif code == 128:
+        move of [doc, "up"]
+    elif code == 129:
+        move of [doc, "down"]
+    elif code == 130:
+        move of [doc, "left"]
+    elif code == 131:
+        move of [doc, "right"]
+    elif code == 132:
+        move of [doc, "home"]
+    elif code == 133:
+        move of [doc, "end"]
+    elif code == 134:
+        delete_fwd of doc
+    elif (code >= 32) and (code < 127):
+        insert_str of [doc, chr of code]
+    return 0
+
+define step() as:
+    # drain forwarded keys onto the core, then repaint the buffer into
+    # our viewport (local coords; task_view translates + clips us).
+    progress is progress + 1
+    local k is win_key of []
+    loop while k >= 0:
+        _handle of k
+        progress is progress + 1
+        k is win_key of []
+    gfx_clear of [16, 18, 28]
+    local n is len of doc.lines
+    local i is 0
+    loop while i < n:
+        gfx_text of [6, 6 + i * 16, doc.lines[i], 220, 222, 235, 1]
+        i is i + 1
+    # caret bar after the cursor column on its row (6px bitmap advance)
+    local prefix is substr of [doc.lines[doc.cy], 0, doc.cx]
+    local cxpx is 6 + (len of prefix) * 6
+    local cypx is 6 + doc.cy * 16
+    gfx_rect of [cxpx, cypx, 1, 14, 120, 200, 255]
+    return progress

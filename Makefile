@@ -69,7 +69,19 @@ build/gen/win_sat.eigs: $(EIGS)/lib/int_vector.eigs $(SAT)/lib/solver.eigs demos
 	mkdir -p build/gen
 	{ cat $(EIGS)/lib/int_vector.eigs; echo; cat $(SAT)/lib/solver.eigs; echo; cat demos/satwin.eigs; } > $@
 
-BUNDLE_SRCS := $(wildcard $(EIGS)/lib/*.eigs) $(filter-out demos/satwin.eigs,$(wildcard demos/*.eigs)) build/gen/tidefs.eigs build/gen/win_sat.eigs
+# The editor window: `import win_edit` = eigen-edit's buffer core
+# (../eigen-edit/edit.eigs, byte-unmodified) + the OS window body
+# (demos/editwin.eigs, filtered out of the wildcard). EigenOS is a
+# CONSUMER of eigen-edit, not its owner — the same edit.eigs runs
+# standalone on the desktop and in the WASM playground. Same
+# concatenation pattern as win_sat. Couples to the sibling
+# ../eigen-edit checkout.
+EDIT := ../eigen-edit
+build/gen/win_edit.eigs: $(EDIT)/edit.eigs demos/editwin.eigs | build
+	mkdir -p build/gen
+	{ cat $(EDIT)/edit.eigs; echo; cat demos/editwin.eigs; } > $@
+
+BUNDLE_SRCS := $(wildcard $(EIGS)/lib/*.eigs) $(filter-out demos/satwin.eigs demos/editwin.eigs,$(wildcard demos/*.eigs)) build/gen/tidefs.eigs build/gen/win_sat.eigs build/gen/win_edit.eigs
 KERNEL := build/EigenOS.elf
 ISO    := build/EigenOS.iso
 
