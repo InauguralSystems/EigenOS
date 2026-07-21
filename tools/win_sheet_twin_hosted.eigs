@@ -1,0 +1,126 @@
+# Hosted twin harness for the spreadsheet window (demos/sheetwin.eigs,
+# bundled as win_sheet by concatenation with eigen-sheet's sheet.eigs).
+# Stubs the window seams (win_key, gfx_*) in pure EigenScript, loads the
+# same two parts the Makefile concatenates, and drives step():
+#   - arrow keys move the active cell within the grid bounds
+#   - typing + Enter commits a NUMBER cell and recalc propagates
+#   - typing + Enter commits a STRING formula (the new num/str evaluator
+#     running inside the OS window, not just standalone)
+#   - Delete clears a cell and dependents fall back
+#   - the published progress signal MOVES across stepped keys (WM vitals)
+# Couples to the sibling ../eigen-sheet checkout, like the Makefile rule it
+# twins. Run from the EigenOS repo root:
+#   ../EigenScript/src/eigenscript tools/win_sheet_twin_hosted.eigs
+# Exits nonzero on any failure — run before touching demos/sheetwin.eigs.
+
+keyq is []
+
+define win_key(unused) as:
+    if (len of keyq) == 0:
+        return 0 - 1
+    local k is keyq[0]
+    list_remove_at of [keyq, 0]
+    return k
+
+define gfx_clear(a) as:
+    return null
+
+define gfx_text(a) as:
+    return null
+
+define gfx_rect(a) as:
+    return null
+
+load_file of "../eigen-sheet/sheet.eigs"
+load_file of "demos/sheetwin.eigs"
+
+fails is 0
+
+define check(tag, cond) as:
+    if cond:
+        print of f"  PASS: {tag}"
+    if not cond:
+        print of f"  FAIL: {tag}"
+        fails is fails + 1
+
+# type a whole string of characters as forwarded key codes, then Enter
+define type_str(text) as:
+    for i in range of (len of text):
+        append of [keyq, ord of (char_at of [text, i])]
+    append of [keyq, 10]
+    return 0
+
+print of "=== win_sheet twin (spreadsheet window vs the recalc engine) ==="
+
+# progress moves across stepped keys (bounded WM vitals signal)
+append of [keyq, 131]          # right arrow
+p1 is step of []
+append of [keyq, 129]          # down arrow
+p2 is step of []
+check of ["progress moves while stepping (1->2)", p1 != p2]
+check of ["progress stays off zero", (p1 > 0) and (p2 > 0)]
+
+# selection moved right+down to B2 (0-based sc=1, sr=1)
+check of ["arrow keys moved the active cell to B2", (sv.sc == 1) and (sv.sr == 1)]
+
+# navigation clamps at the grid edges (many lefts/ups land at A1)
+i is 0
+loop while i < 12:
+    append of [keyq, 130]      # left
+    append of [keyq, 128]      # up
+    i is i + 1
+step of []
+check of ["navigation clamps to A1", (sv.sc == 0) and (sv.sr == 0)]
+
+# --- numeric entry + recalc propagation, driven entirely through win_key ---
+# A1=5, A2=3 (move down between), A3 = =A1+A2  -> 8
+type_str of "5"                # A1=5, Enter moves to A2
+type_str of "3"                # A2=3, Enter moves to A3
+type_str of "=A1+A2"           # A3 formula
+step of []
+check of ["A1 committed via keys", (display of [sheet, "A1"]) == "5"]
+check of ["A2 committed via keys", (display of [sheet, "A2"]) == "3"]
+check of ["formula recalc in-window: A3 = A1+A2 = 8", (display of [sheet, "A3"]) == "8"]
+
+# --- STRING formula through the window: proves the num/str evaluator runs
+# in the OS front-end, not only standalone ---
+# move to B1, enter a text label; B2 = =UPPER(B1)&"!"
+append of [keyq, 131]          # right -> column B (from A4 after the three Enters)
+step of []
+# jump the cursor to B1 by pressing up a few times (clamps at row 0)
+append of [keyq, 128]
+append of [keyq, 128]
+append of [keyq, 128]
+step of []
+check of ["cursor at B1 for string entry", (sv.sc == 1) and (sv.sr == 0)]
+type_str of "hi"               # B1 = hi (text literal), Enter -> B2
+type_str of "=UPPER(B1)&\"!\""  # B2 = HI!
+step of []
+check of ["text literal in-window: B1 = hi", (display of [sheet, "B1"]) == "hi"]
+check of ["string formula in-window: B2 = UPPER(B1)&\"!\" = HI!", (display of [sheet, "B2"]) == "HI!"]
+
+# --- Delete clears a cell and a dependent recomputes ---
+# after committing B2 the cursor sits at B3 (Enter moved down); navigate to A2
+# and delete it; A3 (=A1+A2) falls to 5 (empty A2 = 0)
+append of [keyq, 130]          # left  -> A3 (sc 1->0)
+append of [keyq, 128]          # up    -> A2 (sr 2->1)
+step of []
+check of ["cursor at A2 for delete", (sv.sc == 0) and (sv.sr == 1)]
+append of [keyq, 134]          # delete clears A2
+step of []
+check of ["Delete cleared A2", (display of [sheet, "A2"]) == ""]
+check of ["dependent A3 recomputed after delete (5+0=5)", (display of [sheet, "A3"]) == "5"]
+
+# --- edit-cancel: start typing, ESC, buffer discarded, cell unchanged ---
+append of [keyq, 128]          # up -> A1
+step of []
+append of [keyq, ord of "9"]   # start editing A1 (buf="9")
+append of [keyq, 27]           # ESC cancels
+step of []
+check of ["ESC cancels the edit (not committing)", sv.editing == 0]
+check of ["A1 unchanged after cancelled edit", (display of [sheet, "A1"]) == "5"]
+
+if fails > 0:
+    print of f"win_sheet twin: {str of fails} FAILURE(S)"
+    assert of [0, "win_sheet twin failed"]
+print of "win_sheet twin: all checks passed"

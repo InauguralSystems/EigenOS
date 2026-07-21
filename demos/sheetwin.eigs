@@ -1,0 +1,111 @@
+# sheetwin — the EigenOS desktop window body for eigen-sheet.
+#
+# NOT a standalone module: build/gen/win_sheet.eigs concatenates
+# ../eigen-sheet/sheet.eigs (byte-unmodified) + this file, the tidefs /
+# win_sat / win_edit pattern. `import win_sheet` gets the whole recalc
+# engine; this file is filtered OUT of the bundle wildcard. EigenOS is a
+# CONSUMER of eigen-sheet, not its owner — the engine (cells, formulas,
+# the num/str evaluator, dependency-ordered recalc, draw_grid) lives in
+# and is versioned by the eigen-sheet repo, and the SDL `run` there is
+# present but never called here. This file only supplies the OS-side
+# front-end, and because it is concatenated into the same module it calls
+# the engine's own primitives (_demo, _commit_cell, draw_grid, _cell_addr)
+# directly — nothing about the spreadsheet model is reimplemented.
+#
+# The WM forwards focused-window keystrokes as ASCII/KEY_* codes via
+# task_key -> win_key (kbd.eigs's map: Enter=10, Backspace=8, Tab=9,
+# arrows=0x80/0x81/0x82/0x83, home=0x84, end=0x85, delete=0x86). Arrows
+# move the active cell; typing edits it; Enter commits + recalcs + moves
+# down; Delete clears. The UI state lives in a dict (the _ui pattern) so
+# this file's helpers mutate it safely across the task_spawn / load_file
+# module boundary.
+
+sheet is _demo of (new_sheet of null)
+SNCOLS is 6                    # columns / rows shown in the window viewport
+SNROWS is 8
+SFBH is 18                     # top readout band (active cell + its content)
+SGRIDW is 468                  # 36 (row header) + SNCOLS * 72 (cell width)
+sv is {"sc": 0, "sr": 0, "editing": 0, "buf": ""}
+sprogress is 0.0
+
+# Raw contents of the active cell ("" when empty) — the readout + edit seed.
+define _sv_active_raw() as:
+    local a is _cell_addr of [sv.sc + 1, sv.sr + 1]
+    if (has_key of [sheet.cells, a]) == 1:
+        return sheet.cells[a]
+    return ""
+
+# Apply one forwarded key code onto the engine. Mutates only dict fields and
+# the sheet object (both cross the module boundary as value mutations), never
+# a bare module scalar — so it is safe from inside a loaded window body.
+define _sheet_key(code) as:
+    if sv.editing == 1:
+        if code == 10 or code == 13:
+            _commit_cell of [sheet, sv.sc, sv.sr, sv.buf]
+            sv.editing is 0
+            sv.buf is ""
+            if sv.sr < (SNROWS - 1):
+                sv.sr is sv.sr + 1
+        elif code == 8 or code == 127:
+            if (len of sv.buf) > 0:
+                sv.buf is substr of [sv.buf, 0, (len of sv.buf) - 1]
+        elif code == 27:
+            sv.editing is 0
+            sv.buf is ""
+        elif (code >= 32) and (code < 127):
+            sv.buf is sv.buf + (chr of code)
+    else:
+        if code == 128:
+            if sv.sr > 0:
+                sv.sr is sv.sr - 1
+        elif code == 129:
+            if sv.sr < (SNROWS - 1):
+                sv.sr is sv.sr + 1
+        elif code == 130:
+            if sv.sc > 0:
+                sv.sc is sv.sc - 1
+        elif code == 131:
+            if sv.sc < (SNCOLS - 1):
+                sv.sc is sv.sc + 1
+        elif code == 134:
+            _commit_cell of [sheet, sv.sc, sv.sr, ""]
+        elif code == 10 or code == 13:
+            # Enter on a settled cell opens it for editing, seeded with its raw
+            sv.editing is 1
+            sv.buf is _sv_active_raw of []
+        elif (code >= 32) and (code < 127):
+            # a printable key starts a fresh edit
+            sv.editing is 1
+            sv.buf is chr of code
+    return 0
+
+define step() as:
+    # drain forwarded keys onto the engine, then repaint the grid into our
+    # viewport (local coords; task_view translates + clips us).
+    sprogress is sprogress + 1
+    local k is win_key of []
+    loop while k >= 0:
+        _sheet_key of k
+        sprogress is sprogress + 1
+        k is win_key of []
+    # the engine's OWN draw code renders the grid below the readout band
+    draw_grid of [sheet, SNCOLS, SNROWS, SFBH]
+    # top band: active cell address + its content, or the live edit buffer
+    gfx_rect of [0, 0, SGRIDW, SFBH, 30, 34, 48]
+    local addr is _cell_addr of [sv.sc + 1, sv.sr + 1]
+    local content is _sv_active_raw of []
+    if sv.editing == 1:
+        content is sv.buf + "_"
+    gfx_text of [4, 3, addr + ": " + content, 210, 216, 234, 1]
+    # active-cell outline (grid geometry mirrors draw_grid's rhw/chh/cw/rh)
+    local gx is 36
+    local gy is SFBH + 22
+    local cw is 72
+    local rh is 22
+    local hx is gx + sv.sc * cw
+    local hy is gy + sv.sr * rh
+    gfx_rect of [hx, hy, cw, 2, 120, 190, 255]
+    gfx_rect of [hx, hy + rh, cw, 2, 120, 190, 255]
+    gfx_rect of [hx, hy, 2, rh, 120, 190, 255]
+    gfx_rect of [hx + cw, hy, 2, rh, 120, 190, 255]
+    return sprogress

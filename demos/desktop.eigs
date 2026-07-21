@@ -345,6 +345,7 @@ if ok == 1:
     append of [apps, ["win_vitals", "vitals", "plain", 180, 240, "vitals"]]
     append of [apps, ["win_sat", "sat solver", "plain", 320, 200, "sat"]]
     append of [apps, ["win_edit", "edit", "plain", 360, 220, "edit"]]
+    append of [apps, ["win_sheet", "sheet", "plain", 470, 218, "sheet"]]
     chips is []
     ci is 0
     loop while ci < (len of apps):

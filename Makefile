@@ -81,7 +81,20 @@ build/gen/win_edit.eigs: $(EDIT)/edit.eigs demos/editwin.eigs | build
 	mkdir -p build/gen
 	{ cat $(EDIT)/edit.eigs; echo; cat demos/editwin.eigs; } > $@
 
-BUNDLE_SRCS := $(wildcard $(EIGS)/lib/*.eigs) $(filter-out demos/satwin.eigs demos/editwin.eigs,$(wildcard demos/*.eigs)) build/gen/tidefs.eigs build/gen/win_sat.eigs build/gen/win_edit.eigs
+# The spreadsheet window: `import win_sheet` = eigen-sheet's recalc engine
+# (../eigen-sheet/sheet.eigs, byte-unmodified) + the OS window body
+# (demos/sheetwin.eigs, filtered out of the wildcard). EigenOS is a
+# CONSUMER of eigen-sheet, not its owner — the same sheet.eigs runs
+# standalone on the desktop and in the WASM playground. Same
+# concatenation pattern as win_edit. Couples to the sibling
+# ../eigen-sheet checkout.
+# Twin gate: tools/win_sheet_twin_hosted.eigs.
+SHEET := ../eigen-sheet
+build/gen/win_sheet.eigs: $(SHEET)/sheet.eigs demos/sheetwin.eigs | build
+	mkdir -p build/gen
+	{ cat $(SHEET)/sheet.eigs; echo; cat demos/sheetwin.eigs; } > $@
+
+BUNDLE_SRCS := $(wildcard $(EIGS)/lib/*.eigs) $(filter-out demos/satwin.eigs demos/editwin.eigs demos/sheetwin.eigs,$(wildcard demos/*.eigs)) build/gen/tidefs.eigs build/gen/win_sat.eigs build/gen/win_edit.eigs build/gen/win_sheet.eigs
 KERNEL := build/EigenOS.elf
 ISO    := build/EigenOS.iso
 
