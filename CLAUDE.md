@@ -180,13 +180,14 @@ silently. Add to that: ask whether the thing you hit is a **law** of the
 language or an **earlier decision**. The tell is writing, or thinking,
 *"X must be true because the runtime does Y."*
 
-Bought 2026-08-28 (ouroboros#127 / DMG). The AOT compiles a program's main
-file but emits `load_file` as a runtime call, so loaded modules are
-interpreted by the linked VM. A real bug in that seam was found, minimised,
+Bought 2026-08-28 (ouroboros#127 / DMG). The AOT then compiled a program's
+main file but emitted `load_file` as a runtime call, so loaded modules were
+interpreted by the linked VM (since fixed, ouroboros#129 — the reasoning is
+the lesson, not the state). A real bug in that seam was found, minimised,
 fixed and verified — and reported as "unlocking the AOT multiplier for
 DMG". Measured on being challenged: DMG is 3,288 lines, 818 compiled and
 2,470 interpreted, including the 128-function opcode dispatch. Every
-emulated instruction runs interpreted, so the fix makes it *run* and cannot
+emulated instruction ran interpreted, so the fix made it *run* and could not
 make it *faster*. A whole investigation cycle had treated that design as
 terrain, and the capability to do it the other way already existed upstream
 for another purpose.
