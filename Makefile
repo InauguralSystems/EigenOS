@@ -39,8 +39,11 @@ MINI_CFLAGS := -fno-builtin -ffp-contract=off -fno-math-errno \
 EIGS_VAR   = $(shell env -u MAKEFLAGS -u MAKELEVEL make --no-print-directory -s \
                  -C $(EIGS) print-$(1) | tr ' ' '\n' | sed -n 's#^src/\(.*\)\.c$$#\1#p')
 EIGS_SRCS := $(filter-out $(call EIGS_VAR,CLI_ONLY),$(call EIGS_VAR,SOURCES))
+# Only a goal that builds needs the list: `make clean` works with no sibling.
+ifneq ($(filter-out clean,$(or $(MAKECMDGOALS),all)),)
 ifeq ($(strip $(EIGS_SRCS)),)
 $(error derived an EMPTY runtime source list from $(EIGS)/Makefile (print-SOURCES minus print-CLI_ONLY))
+endif
 endif
 EIGS_FS   := mini_libc mini_libm mini_fmt mini_strtod
 EIGS_OBJS := $(addprefix build/eigs_,$(addsuffix .o,$(EIGS_SRCS))) \
