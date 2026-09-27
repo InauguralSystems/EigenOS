@@ -2,6 +2,43 @@
 
 (none open)
 
+## RESOLVED — the kernel stopped linking against EigenScript main (EigenScript#1181)
+
+**Symptom.** `make all` against current `../EigenScript` failed at the link
+with about 50 undefined symbols (`builtin_buf_*`, `task_*`,
+`is_builtin_name`, `register_host_builtins`, ...) plus `pthread_once` and
+`pthread_self`. Separately, a bare `make` built nothing: the first rule in
+the Makefile (`build/gen/tidefs.eigs`) was the default goal.
+
+**Root cause (found 2026-09-27).** Two one-sided contracts.
+1. `EIGS_SRCS` was a hand-typed copy of the runtime's source list. Upstream
+   split the runtime into new units (`builtins_buf`, `builtins_host`,
+   `fsutil`, `lint_host`, `task`), and the copy fell five behind. Nothing
+   compared it with upstream. The Makefile was last touched 2026-07-21.
+2. EigenScript's freestanding contract (`tools/freestanding_hal_roots.txt`)
+   gained `pthread_once` (PRNG seeding) and `pthread_self` (#1142's
+   replay-owner check). The upstream gate proves the runtime imports only
+   listed roots, but nothing proved EigenOS defines them all. The allowlist
+   comment asserted EigenOS "already owns" them; `hal.c` had 14 of 16.
+
+**Fix.**
+- `EIGS_SRCS` is derived from EigenScript's Makefile (`print-SOURCES` minus
+  `print-CLI_ONLY`), the derivation upstream's own freestanding-check uses. An
+  empty derivation is a build error.
+- `hal.c` defines `pthread_once` (a flag plus a call) and `pthread_self`
+  (a constant: one CPU thread; the replay check keys the owning state
+  separately).
+- `tools/hal_roots_check.sh` runs before every link and fails naming any
+  listed root the kernel side does not define. Calibrated on four cases: the
+  clean tree passes (32/32); main's `hal.c` fails naming both roots;
+  removing only `pthread_self` fails through `make` before `ld`; an empty
+  roots file fails as "examined nothing".
+- `.DEFAULT_GOAL := all`.
+
+Boot after the fix: every serial verdict OK through M13-2. At the REPL,
+`print of ((random of []) != (random of []))` printed `1`, which is the
+`pthread_once` path on bare metal.
+
 ## RESOLVED — M13-2: the journal recorded the full L-record trace, making heavy sessions unpersistable
 
 **Symptom.** The M13-2 tape-replay gate (`tools/net_tape_replay.py`)

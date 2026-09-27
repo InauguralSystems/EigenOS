@@ -14,6 +14,9 @@ QEMU    := qemu-system-x86_64
 # (crashlog.h) is RAM-backed; the default -m 128M would leave it
 # outside RAM and silently dead in every dev run.
 QFLAGS  := -m 1024
+# `make` builds the kernel. Without this the first rule in the file (a
+# generated bundle input) was the default goal and `make` linked nothing.
+.DEFAULT_GOAL := all
 
 # --- EigenScript runtime, built freestanding into the kernel image (M5) ---
 # The sibling checkout; the runtime is compiled WITH SSE (it is all doubles)
@@ -28,8 +31,20 @@ RT_CFLAGS := -ffreestanding -nostdlib -m64 -mno-red-zone -msse -msse2 \
 MINI_CFLAGS := -fno-builtin -ffp-contract=off -fno-math-errno \
                -DEIGS_MINI_STANDARD_NAMES=1
 
-EIGS_SRCS := eigenscript lexer parser builtins builtins_tensor hash arena \
-             state strbuf ext_store fmt lint chunk compiler vm jit trace eigs_embed
+# The runtime units come from EigenScript's own Makefile: SOURCES minus
+# CLI_ONLY, the same derivation its freestanding-check gate uses. A
+# hand-written copy of that list silently fell five units behind upstream
+# (EigenScript#1181) and the kernel stopped linking. MAKEFLAGS/MAKELEVEL are
+# dropped so the sub-make prints only the variable (no "Entering directory").
+EIGS_VAR   = $(shell env -u MAKEFLAGS -u MAKELEVEL make --no-print-directory -s \
+                 -C $(EIGS) print-$(1) | tr ' ' '\n' | sed -n 's#^src/\(.*\)\.c$$#\1#p')
+EIGS_SRCS := $(filter-out $(call EIGS_VAR,CLI_ONLY),$(call EIGS_VAR,SOURCES))
+# Only a goal that builds needs the list: `make clean` works with no sibling.
+ifneq ($(filter-out clean,$(or $(MAKECMDGOALS),all)),)
+ifeq ($(strip $(EIGS_SRCS)),)
+$(error derived an EMPTY runtime source list from $(EIGS)/Makefile (print-SOURCES minus print-CLI_ONLY))
+endif
+endif
 EIGS_FS   := mini_libc mini_libm mini_fmt mini_strtod
 EIGS_OBJS := $(addprefix build/eigs_,$(addsuffix .o,$(EIGS_SRCS))) \
              $(addprefix build/eigsfs_,$(addsuffix .o,$(EIGS_FS))) \
@@ -182,7 +197,12 @@ build/eigsfs_%.o: $(EIGS)/src/freestanding/%.c | build
 build/hal.o: src/hal.c src/kheap.h src/serial.h src/timer.h src/keyboard.h src/vga.h src/fb.h src/mouse.h src/ata.h src/irqhook.h src/io.h src/stackguard.h | build
 	$(CC) $(RT_CFLAGS) -Isrc $< -o $@
 
-$(KERNEL): $(OBJS) $(EIGS_OBJS) linker.ld
+# Every HAL root EigenScript's freestanding contract lists must be defined by
+# the kernel side (never by the runtime's own objects) before the link runs.
+HAL_ROOTS := $(EIGS)/tools/freestanding_hal_roots.txt
+$(KERNEL): $(OBJS) $(EIGS_OBJS) linker.ld tools/hal_roots_check.sh $(HAL_ROOTS)
+	sh tools/hal_roots_check.sh $(HAL_ROOTS) $(OBJS) \
+	    $(filter-out build/eigs_%,$(EIGS_OBJS))
 	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(EIGS_OBJS) -lgcc
 
 verify: $(KERNEL)

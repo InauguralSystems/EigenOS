@@ -119,6 +119,20 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*fn)(void *), v
     (void)t; (void)a; (void)fn; (void)arg; return 11 /* EAGAIN */;
 }
 int pthread_join(pthread_t t, void **r) { (void)t; (void)r; return 0; }
+/* One-time init (the runtime's PRNG seeding). One CPU thread, so a flag is
+ * the whole contract; it is set before the call, so a re-entrant call from
+ * inside fn returns instead of recursing. */
+int pthread_once(pthread_once_t *once, void (*fn)(void)) {
+    if (*once == PTHREAD_ONCE_INIT) { *once = 1; fn(); }
+    return 0;
+}
+/* Thread IDENTITY for #1142's replay-owner check (trace.c). EigenOS runs
+ * every task on the one CPU thread (a task is an EigsState switched by
+ * eigs_thread_switch), so there is exactly one thread id. That matches
+ * hosted multi-state-on-one-thread, and the check keys state separately
+ * (g_replay_owner_state). A per-task id here would make a replay take from
+ * the fs daemon or a window task fail where hosted accepts it. */
+pthread_t pthread_self(void) { return (pthread_t)1; }
 
 /* ---- TLS bring-up ----
  * The runtime uses __thread (the VM, dict cache, eigs_current). Set up a
