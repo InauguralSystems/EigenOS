@@ -42,8 +42,14 @@ make usb USB=/dev/sdX   # write the ISO to a stick (guarded; overwrites!)
   never hangs), README status + ROADMAP checkboxes updated in the same
   commit.
 - T3200 simulation gates before any hardware claim: boot
-  `-cpu core2duo -m 3840 -smp 2`; image must contain zero post-Merom
-  instructions (`objdump -d | grep -cE "rdrand|ptest|popcnt|crc32"` = 0).
+  `-cpu core2duo -m 3840 -smp 2`; `sh tools/substrate_audit.sh` must pass
+  (no SSE/mem* in kernel objects, no post-Merom instruction in the image,
+  TLS fits its block). The ISA is pinned in the Makefile (`-march=x86-64`).
+- **CI** (`.github/workflows/ci.yml`) builds, audits and boots on every push
+  and PR, and nightly against EigenScript `main`. A red nightly lands on one
+  tracking issue. The boot gate (`sh tools/boot_gate.sh`) counts OK verdicts
+  against `tools/boot_verdicts.expected`: a milestone that adds a self-test
+  verdict bumps that number in the same commit.
 - Language gaps found here are fixed **upstream in EigenScript** (branch →
   PR → merge), never worked around. Deep procedure (fault triage ladder,
   sendkey driving, invariants): the `eigenos-kernel-engineer` skill.
