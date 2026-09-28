@@ -1,0 +1,80 @@
+# Generate the boot gate's disk content (EigenOS#5): a regionfs store laid
+# down by demos/regionfs.eigs itself, byte-unmodified, over a simulated disk
+# of the gate's size. The m10 self-test only reaches its OK verdict when the
+# disk holds a store, and a blank disk would silently skip it.
+#
+# Prints one line per non-zero sector, "<lba> <1024 hex digits>", for
+# tools/boot_gate.sh to write into the raw image. The store holds exactly
+# one file, so the gate can pin "1 file(s)".
+# Run with a hosted EigenScript (load_file resolves beside this script):
+#   ../EigenScript/src/eigenscript tools/mkstore.eigs
+disk is {}
+SIM_SECTORS is 131072    # 64 MiB, the size boot_gate.sh creates
+
+define bcopy(src) as:
+    local out is buffer of 512
+    local i is 0
+    loop while i < 512:
+        buf_set of [out, i, buf_get of [src, i]]
+        i is i + 1
+    return out
+
+define blk_present() as:
+    return 1
+
+define blk_sectors() as:
+    return SIM_SECTORS
+
+define blk_model() as:
+    return "MKSTORE"
+
+define blk_unlock() as:
+    return 1
+
+define blk_flush() as:
+    return 1
+
+define blk_read(lba) as:
+    local k is str of lba
+    if (has_key of [disk, k]) == 1:
+        return bcopy of disk[k]
+    return buffer of 512
+
+define blk_write(lba, data) as:
+    if (buf_len of data) != 512:
+        return 0
+    disk[str of lba] is bcopy of data
+    return 1
+
+load_file of "../demos/regionfs.eigs"
+
+# The kernel's fs_format calls `regionfs.format of []`: the same defaults.
+if (format of []) != 1:
+    print of "mkstore: format failed"
+    exit of 1
+payload is buffer of 40
+bi is 0
+loop while bi < 40:
+    buf_set of [payload, bi, (bi * 7 + 3) % 256]
+    bi is bi + 1
+if (write_bytes of ["gate", payload, 0]) != 1:
+    print of "mkstore: write failed"
+    exit of 1
+if (len of (list_files of [])) != 1:
+    print of "mkstore: expected exactly 1 file"
+    exit of 1
+
+HEX is "0123456789abcdef"
+for k in keys of disk:
+    local b is disk[k]
+    local nz is 0
+    local line is ""
+    local i is 0
+    loop while i < 512:
+        local v is buf_get of [b, i]
+        if v != 0:
+            nz is 1
+        line is line + HEX[floor of (v / 16)] + HEX[v % 16]
+        i is i + 1
+    if nz == 1:
+        print of (k + " " + line)

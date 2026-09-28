@@ -2,4 +2,4 @@
 # tools/boot_gate.sh (a line matching '^\[tag\] ... OK'). A milestone that
 # adds a self-test raises this in the same commit; a verdict that vanishes
 # turns the boot gate red.
-30
+31

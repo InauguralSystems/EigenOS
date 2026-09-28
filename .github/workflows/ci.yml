@@ -29,8 +29,10 @@ on:
 permissions:
   contents: read
 
+# Keyed by event too: a push to main must not cancel a queued nightly, or the
+# report job would post "failed: cancelled" for a run that never measured.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -134,6 +136,11 @@ jobs:
       - name: make iso
         working-directory: EigenOS
         run: make iso
+
+      # The boot gate lays a regionfs store onto its disk with
+      # tools/mkstore.eigs, which needs the hosted interpreter.
+      - name: Build the hosted EigenScript
+        run: make -j"$(nproc)" -C EigenScript
 
       - name: Boot gate
         working-directory: EigenOS
