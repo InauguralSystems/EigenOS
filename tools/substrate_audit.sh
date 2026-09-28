@@ -3,10 +3,9 @@
 # the hosted EigenScript suite cannot see:
 #   1. Kernel objects contain no SSE and no reference to mem* (the ISR
 #      trampoline saves GP registers only; the mini-libc mem* are SSE-built).
-#   2. The image contains none of rdrand/ptest/popcnt/crc32 (the T3200 is a
-#      Merom: no RDRAND, SSE4.x or POPCNT). This is a spot check of four
-#      names, not of every post-Merom instruction; the structural guarantee
-#      is the Makefile's -march=x86-64 pin on every object.
+#   2. The image contains no post-Merom instruction (the T3200 is a Merom:
+#      no SSE4.x, POPCNT, AVX, BMI or RDRAND). This is the second layer: the
+#      structural guarantee is the Makefile's -march=x86-64 pin.
 #   3. PT_TLS memsz, rounded to 64 plus the 8-byte TCB, fits g_tls_block.
 # Every audit fails when it cannot measure (missing object, no disassembly,
 # no PT_TLS header): an audit that examined nothing is not a pass.
@@ -61,16 +60,24 @@ for o in fb vga mouse keyboard idt irqhook isr; do
     case " $objs " in *" build/$o.o "*) ;; *) bad "IRQ-path object build/$o.o is not in the audited kernel-flags set";; esac
 done
 
-# 2. Post-Merom instructions anywhere in the image.
+# 2. Post-Merom instructions anywhere in the image. SSE4.1/4.2 by mnemonic
+# (leaving out the SSE2 forms that share a prefix: pextrw/pinsrw, pminsw,
+# pmaxsw, pminub, pmaxub), POPCNT/LZCNT/TZCNT/MOVBE/BMI, RDRAND/RDSEED, and
+# any VEX-encoded (AVX) instruction, which objdump prints with a v prefix.
+# TZCNT is left out on purpose: GCC emits `rep bsf` for __builtin_ctz, which
+# objdump names tzcnt and a pre-BMI CPU runs as BSF (same result for nonzero
+# input, the only input ctz defines). LZCNT stays: an old CPU runs it as BSR,
+# which returns a different number.
+POSTMEROM_RE='\s(roundsd|roundss|roundpd|roundps|p(ext|ins)r[bdq]|extractps|insertps|pmulld|pmuldq|pmin(sb|sd|uw|ud)|pmax(sb|sd|uw|ud)|pmov[sz]x(bw|bd|bq|wd|wq|dq)|ptest|blendv?p[sd]|pblendv?b|pblendw|dpp[sd]|mpsadbw|phminposuw|packusdw|pcmpeqq|pcmpgtq|pcmp[ei]str[im]|movntdqa|popcnt|lzcnt|movbe|andn|bextr|blsi|blsr|blsmsk|bzhi|pdep|pext|sarx|shlx|shrx|rorx|crc32|rdrand|rdseed|v[a-z0-9]+)\s'
 dis=$(objdump -d "$ELF") || { bad "objdump failed on $ELF"; dis=; }
 ninsn=$(printf '%s\n' "$dis" | grep -cE '^ +[0-9a-f]+:')
 if [ "$ninsn" -gt 0 ]; then
-    n=$(printf '%s\n' "$dis" | grep -cE '\s(rdrand|ptest|popcnt|crc32)')
+    n=$(printf '%s\n' "$dis" | grep -cE "$POSTMEROM_RE")
     if [ "$n" -ne 0 ]; then
         bad "$ELF has $n post-Merom instructions (T3200 cannot run them):"
-        printf '%s\n' "$dis" | grep -E '\s(rdrand|ptest|popcnt|crc32)' | head -5
+        printf '%s\n' "$dis" | grep -E "$POSTMEROM_RE" | head -5
     else
-        echo "substrate-audit: OK: $ELF ($ninsn insns, 0 rdrand/ptest/popcnt/crc32)"
+        echo "substrate-audit: OK: $ELF ($ninsn insns, 0 post-Merom instructions)"
     fi
 else
     bad "$ELF disassembled to 0 instructions"
