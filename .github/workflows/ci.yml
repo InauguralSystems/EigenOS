@@ -1,0 +1,237 @@
+name: ci
+
+# Build, audit and boot the kernel (EigenOS#5). EigenOS has no pin on its
+# siblings: the Makefile builds whatever ../EigenScript holds, so every run
+# checks out EigenScript `main`. The nightly run is the canary that EigenScript
+# #1181 lacked: the kernel stopped linking against upstream and nobody saw it
+# for about two months. A red nightly (or a red planted dispatch) lands on a
+# tracking issue, so it reaches a person instead of only a badge.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # 05:23 UTC, an hour after EigenScript's own nightly (04:17 UTC), off the
+    # top of the hour.
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+    inputs:
+      plant:
+        description: >-
+          Plant a fault to prove the gates go red (none = a normal run).
+          fail-verdict: the m5 self-test prints WRONG. drop-verdict: one OK
+          verdict line is deleted. drop-hal-root: pthread_self is removed.
+        type: choice
+        default: none
+        options: [none, fail-verdict, drop-verdict, drop-hal-root]
+
+permissions:
+  contents: read
+
+# Keyed by event and plant: a push to main must not cancel a queued nightly
+# (the report would post "failed: cancelled" for a run that never measured),
+# and back-to-back plant dispatches must not cancel each other.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ inputs.plant || 'none' }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  kernel:
+    name: build / audit / boot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # The Makefile's ../ paths resolve against sibling checkouts laid out
+      # exactly as on the dev box.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          path: EigenOS
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: InauguralSystems/EigenScript
+          ref: main
+          path: EigenScript
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: InauguralSystems/tidelog
+          ref: main
+          path: tidelog
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: InauguralSystems/EigenMiniSat
+          ref: main
+          path: EigenMiniSat
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: InauguralSystems/eigen-edit
+          ref: main
+          path: eigen-edit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: InauguralSystems/eigen-sheet
+          ref: main
+          path: eigen-sheet
+
+      - name: Record the sibling revisions this run built against
+        run: |
+          for r in EigenOS EigenScript tidelog EigenMiniSat eigen-edit eigen-sheet; do
+            echo "$r $(git -C "$r" rev-parse HEAD)"
+          done | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Install the toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc make python3 grub-pc-bin grub-common xorriso \
+            qemu-system-x86 qemu-utils
+
+      # Standard hosted runners expose /dev/kvm but only to root; the boot
+      # gate uses KVM when the device is writable and TCG otherwise.
+      - name: Enable KVM
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+              | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+          fi
+          ls -l /dev/kvm || echo "no /dev/kvm: the boot gate will run under TCG"
+
+      - name: Plant a fault (${{ inputs.plant }})
+        if: github.event_name == 'workflow_dispatch' && inputs.plant != 'none'
+        working-directory: EigenOS
+        env:
+          PLANT: ${{ inputs.plant }}
+        run: |
+          set -eu
+          cp src/hal.c /tmp/hal.c.orig
+          case "$PLANT" in
+            fail-verdict)
+              sed -i 's/(answer == 42) ? "  (expected 42) OK\\n"/(answer == 43) ? "  (expected 42) OK\\n"/' src/hal.c ;;
+            drop-verdict)
+              sed -i '/serial_write("\[mn\] stack canary intact after the demo evals OK\\n");/d' src/hal.c ;;
+            drop-hal-root)
+              sed -i '/^pthread_t pthread_self(void)/d' src/hal.c ;;
+            *) echo "unknown plant: $PLANT"; exit 1 ;;
+          esac
+          # A plant that changed nothing proves nothing.
+          if cmp -s src/hal.c /tmp/hal.c.orig; then
+            echo "plant $PLANT did not change src/hal.c"; exit 1
+          fi
+          git diff
+
+      # `make all` runs tools/hal_roots_check.sh before the link.
+      - name: make all
+        working-directory: EigenOS
+        run: make -j"$(nproc)" all
+
+      - name: make verify
+        working-directory: EigenOS
+        run: make verify
+
+      - name: Substrate audits
+        working-directory: EigenOS
+        run: sh tools/substrate_audit.sh
+
+      - name: make iso
+        working-directory: EigenOS
+        run: make iso
+
+      # The boot gate lays a regionfs store onto its disk with
+      # tools/mkstore.eigs, which needs the hosted interpreter.
+      - name: Build the hosted EigenScript
+        run: make -j"$(nproc)" -C EigenScript
+
+      - name: Boot gate
+        working-directory: EigenOS
+        run: sh tools/boot_gate.sh build/boot_gate.serial.log
+
+      - name: Upload the serial log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: boot-serial-log
+          path: EigenOS/build/boot_gate.serial.log
+          if-no-files-found: ignore
+
+  report:
+    name: tracking issue on a failed nightly
+    needs: [kernel]
+    # Scheduled runs, and dispatches (the planted-red proof), only: a red PR
+    # is already in front of its author.
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      # One thread for the kernel's health. A failing nightly or unplanted
+      # dispatch reopens and appends to it; a green one after that says so and
+      # closes it. A PLANTED dispatch inverts the verdict: red is the expected
+      # outcome, recorded on the thread as a plant (without reopening it), and
+      # a planted run that comes back GREEN is the real failure, since a gate
+      # just let a known fault through.
+      - name: Report to the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RESULT: ${{ needs.kernel.result }}
+          EVENT: ${{ github.event_name }}
+          PLANT: ${{ inputs.plant || 'none' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE="nightly: kernel build/boot against EigenScript main failed"
+          # Exact-title match across open AND closed issues, so a week of red
+          # is one thread and a closed thread is reopened, not duplicated.
+          num=$(gh issue list --repo "$REPO" --state all --limit 100 \
+                  --search "in:title \"$TITLE\"" --json number,title \
+                  --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          state=""
+          [ -z "$num" ] || state=$(gh issue view "$num" --repo "$REPO" --json state -q .state)
+
+          post() {  # post BODY [reopen]
+            if [ -n "$num" ]; then
+              if [ "${2:-}" = reopen ] && [ "$state" = CLOSED ]; then
+                gh issue reopen "$num" --repo "$REPO"
+              fi
+              gh issue comment "$num" --repo "$REPO" --body "$1"
+              echo "commented on issue #$num"
+            elif gh issue create --repo "$REPO" --title "$TITLE" --body "$1" \
+                   --label area:ci --label kind:gate-defect; then
+              echo "opened a tracking issue"
+            else
+              # An unknown label makes `gh issue create` create nothing; the
+              # thread matters, the label does not.
+              gh issue create --repo "$REPO" --title "$TITLE" --body "$1"
+            fi
+          }
+
+          if [ "$PLANT" != none ]; then
+            if [ "$RESULT" = failure ]; then
+              post "Planted fault \`$PLANT\`: the kernel job went red, as it must (a proof run, not a regression). Run: $RUN_URL"
+              exit 0
+            fi
+            post "GATE DEFECT: planted fault \`$PLANT\` was NOT caught (kernel job \`$RESULT\`). A gate let a known fault through. Run: $RUN_URL" reopen
+            exit 1
+          fi
+
+          if [ "$RESULT" = success ]; then
+            echo "kernel job green ($EVENT)"
+            if [ "$state" = OPEN ]; then
+              gh issue comment "$num" --repo "$REPO" --body "GREEN again ($EVENT); closing. Run: $RUN_URL"
+              gh issue close "$num" --repo "$REPO"
+            fi
+            exit 0
+          fi
+
+          what="The scheduled run"
+          [ "$EVENT" = schedule ] || what="A manual dispatch"
+          post "$what failed: kernel job \`$RESULT\`.
+
+          Run: $RUN_URL
+
+          This run built EigenOS against EigenScript \`main\` (the sibling revisions are in the run summary). EigenOS has no pin, so a red nightly with no EigenOS change means upstream broke the kernel build, boot or a substrate audit (EigenOS#5)." reopen
+          exit 1

@@ -1,0 +1,5 @@
+# The number of OK verdict lines a clean boot prints on COM1, read by
+# tools/boot_gate.sh (a line matching '^\[tag\] ... OK'). A milestone that
+# adds a self-test raises this in the same commit; a verdict that vanishes
+# turns the boot gate red.
+31
