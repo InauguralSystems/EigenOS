@@ -5,7 +5,11 @@
 #   make run        boot the ISO in QEMU
 #   make clean
 CC      := gcc
-CFLAGS  := -ffreestanding -nostdlib -m64 -mno-red-zone -mno-mmx -mno-sse \
+# -march=x86-64 pins the ISA to the baseline (SSE2) instead of trusting the
+# toolchain default: the T3200 (Merom) has no SSE4.x or POPCNT, and a distro
+# gcc defaulting to x86-64-v2 would put SSE4.1 in the runtime (#UD at boot).
+ISA     := -march=x86-64 -mtune=generic
+CFLAGS  := $(ISA) -ffreestanding -nostdlib -m64 -mno-red-zone -mno-mmx -mno-sse \
            -mno-sse2 -Wall -Wextra -Wno-unused-parameter -O2 -c
 LDFLAGS := -ffreestanding -nostdlib -no-pie -Wl,-T,linker.ld -Wl,-z,noexecstack \
            -Wl,--build-id=none
@@ -23,7 +27,7 @@ QFLAGS  := -m 1024
 # and the freestanding profile, TLS forced to local-exec (statically linked,
 # so %fs:tpoff is a link-time constant — no __tls_get_addr).
 EIGS      := ../EigenScript
-RT_CFLAGS := -ffreestanding -nostdlib -m64 -mno-red-zone -msse -msse2 \
+RT_CFLAGS := $(ISA) -ffreestanding -nostdlib -m64 -mno-red-zone -msse -msse2 \
              -fno-stack-protector -U_FORTIFY_SOURCE -ftls-model=local-exec \
              -DEIGENSCRIPT_FREESTANDING=1 -DEIGENSCRIPT_EXT_HTTP=0 \
              -DEIGENSCRIPT_EXT_MODEL=0 -DEIGENSCRIPT_EXT_DB=0 \

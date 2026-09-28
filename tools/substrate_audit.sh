@@ -3,8 +3,10 @@
 # the hosted EigenScript suite cannot see:
 #   1. Kernel objects contain no SSE and no reference to mem* (the ISR
 #      trampoline saves GP registers only; the mini-libc mem* are SSE-built).
-#   2. The image contains no post-Merom instruction (the T3200 is a Penryn:
-#      no RDRAND, no SSE4.1 PTEST, no POPCNT, no SSE4.2 CRC32).
+#   2. The image contains none of rdrand/ptest/popcnt/crc32 (the T3200 is a
+#      Merom: no RDRAND, SSE4.x or POPCNT). This is a spot check of four
+#      names, not of every post-Merom instruction; the structural guarantee
+#      is the Makefile's -march=x86-64 pin on every object.
 #   3. PT_TLS memsz, rounded to 64 plus the 8-byte TCB, fits g_tls_block.
 # Every audit fails when it cannot measure (missing object, no disassembly,
 # no PT_TLS header): an audit that examined nothing is not a pass.
@@ -51,8 +53,13 @@ for f in $objs; do
     fi
 done
 # The Makefile lists 19 kernel objects today; fewer than 10 means the
-# derivation broke, not that the kernel shrank.
+# derivation broke, not that the kernel shrank. The IRQ-reachable objects
+# must be in the audited set by name: one moved to the SSE-built group
+# would otherwise leave the audit without a word.
 [ "$nobj" -ge 10 ] || bad "derived only $nobj kernel objects from the Makefile's OBJS"
+for o in fb vga mouse keyboard idt irqhook isr; do
+    case " $objs " in *" build/$o.o "*) ;; *) bad "IRQ-path object build/$o.o is not in the audited kernel-flags set";; esac
+done
 
 # 2. Post-Merom instructions anywhere in the image.
 dis=$(objdump -d "$ELF") || { bad "objdump failed on $ELF"; dis=; }
