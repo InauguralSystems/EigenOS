@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/tools/stop_gate.sh",
+            "timeout": 720,
+            "statusMessage": "Stop gate: build + verify + substrate audit vs HEAD on dirty src"
+          }
+        ]
+      }
+    ]
+  }
+}
