@@ -32,8 +32,12 @@ bad() { echo "substrate-audit: FAIL: $*"; fail=1; }
 #     `grep "call.*mem"` over it can never match.
 # Residual: a non-IRQ kernel object that legitimately needs mem* would red
 # here; waive it by name with the reason, never by weakening the check.
+# EIGENOS_MAKEVARS: sibling paths for a checkout without ../EigenScript beside
+# it (a linked worktree elsewhere; tools/stop_gate.sh sets it). Word-split on
+# purpose: "EIGS=/x SAT=/y". Unset, the Makefile's ../X defaults apply.
+# shellcheck disable=SC2086
 objs=$(printf 'print-OBJS:\n\t@echo $(OBJS)\n' |
-       env -u MAKEFLAGS -u MAKELEVEL make --no-print-directory -s -f Makefile -f - print-OBJS)
+       env -u MAKEFLAGS -u MAKELEVEL make --no-print-directory -s -f Makefile -f - ${EIGENOS_MAKEVARS:-} print-OBJS)
 nobj=0
 for f in $objs; do
     nobj=$((nobj + 1))
