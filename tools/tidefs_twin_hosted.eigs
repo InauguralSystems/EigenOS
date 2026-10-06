@@ -41,7 +41,7 @@ define blk_flush() as:
 
 define blk_read(lba) as:
     local k is str of lba
-    if (has_key of [disk, k]) == 1:
+    if (has_key of [disk, k]):
         return bcopy of disk[k]
     return buffer of 512
 
@@ -85,7 +85,7 @@ define eq_val(a, b) as:
         if (len of ka) != (len of (keys of b)):
             return 0
         for k in ka:
-            if (has_key of [b, k]) == 0:
+            if not (has_key of [b, k]):
                 return 0
             if (eq_val of [a[k], b[k]]) == 0:
                 return 0
@@ -99,7 +99,7 @@ define eq_keydir(kd, exp) as:
     if (len of (keys of kd)) != (len of ke):
         return 0
     for k in ke:
-        if (has_key of [kd, k]) == 0:
+        if not (has_key of [kd, k]):
             return 0
         if (eq_val of [kd[k], exp[k]]) == 0:
             return 0
@@ -130,7 +130,7 @@ for r in recs:
     if r[0] == 1:
         nxt[r[1]] is r[2]
     if r[0] == 2:
-        if (has_key of [nxt, r[1]]) == 1:
+        if (has_key of [nxt, r[1]]):
             dict_remove of [nxt, r[1]]
     append of [expstates, nxt]
     cur is nxt

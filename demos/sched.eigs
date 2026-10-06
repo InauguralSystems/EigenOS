@@ -14,7 +14,7 @@ define round_robin(ids, rounds) as:
     local r is 0
     loop while r < rounds:
         for id in ids:
-            if (task_alive of id) == 1:
+            if (task_alive of id):
                 task_step of id
         r is r + 1
     return r
