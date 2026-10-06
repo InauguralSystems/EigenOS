@@ -2022,7 +2022,7 @@ int eigs_run_demo(void) {
         "p is task_step of tid\n"
         "q is task_read of [tid, \"progress\"]\n"
         "task_kill of tid\n"
-        "(p == 3) and (q == 3) and ((task_alive of tid) == 0)");
+        "(p == 3) and (q == 3) and (not (task_alive of tid))");
     int task_ok = v7 && eigs_value_type(v7) == EIGS_TYPE_NUM &&
                   (int)eigs_value_as_num(v7) == 1;
     if (v7) eigs_value_release(v7);
@@ -2258,7 +2258,7 @@ int eigs_run_demo(void) {
         "ok is (t.month >= 1) and (t.month <= 12) and (t.day >= 1) and (t.day <= 31)\n"
         "ok is ok and (t.hour < 24) and (t.minute < 60) and (t.second < 61) and (u2 > u1)\n"
         "s is \"\"\n"
-        "if ok == 1:\n"
+        "if ok:\n"
         "    s is rtc.stamp of []\n"
         "s");
     int rtc_ok = v14 && eigs_value_type(v14) == EIGS_TYPE_STR &&

@@ -31,7 +31,7 @@ sprogress is 0.0
 # Raw contents of the active cell ("" when empty) — the readout + edit seed.
 define _sv_active_raw() as:
     local a is _cell_addr of [sv.sc + 1, sv.sr + 1]
-    if (has_key of [sheet.cells, a]) == 1:
+    if (has_key of [sheet.cells, a]):
         return sheet.cells[a]
     return ""
 

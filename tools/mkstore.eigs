@@ -36,7 +36,7 @@ define blk_flush() as:
 
 define blk_read(lba) as:
     local k is str of lba
-    if (has_key of [disk, k]) == 1:
+    if (has_key of [disk, k]):
         return bcopy of disk[k]
     return buffer of 512
 

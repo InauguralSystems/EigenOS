@@ -236,7 +236,7 @@ define ip_local(dip) as:                  # on-link, or via the gateway?
 # Send seg (a buffer) to dip as protocol proto. Returns 1/0.
 define ip_send(dip, proto, seg) as:
     local dmac is [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
-    if (ip_bcast of (dip)) == 0:
+    if not (ip_bcast of (dip)):
         local nh is dip
         if (ip_local of (dip)) == 0:
             nh is cfg["gw"]
