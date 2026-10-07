@@ -1764,6 +1764,9 @@ static EigsValue *b_task_eval(EigsValue *a) {
         case EIGS_TYPE_STR:
             snprintf(out, sizeof out, "%s", eigs_value_as_string(v));
             break;
+        case EIGS_TYPE_BOOL:
+            snprintf(out, sizeof out, "%s", eigs_value_as_bool(v) ? "true" : "false");
+            break;
         case EIGS_TYPE_NULL:
             break;
         default:
@@ -1966,8 +1969,8 @@ int eigs_run_demo(void) {
         "loop while not converged:\n"
         "    e is e * 0.5\n"
         "converged");
-    int obs_ok = v4 && eigs_value_type(v4) == EIGS_TYPE_NUM &&
-                 (int)eigs_value_as_num(v4) == 1;
+    int obs_ok = v4 && eigs_value_type(v4) == EIGS_TYPE_BOOL &&
+                 eigs_value_as_bool(v4);
     if (v4) eigs_value_release(v4);
     serial_write(obs_ok ? "[mn] eval 4 (observer loop) converged OK\n"
                         : "[mn] eval 4 (observer loop) FAILED\n");
@@ -2001,8 +2004,8 @@ int eigs_run_demo(void) {
         "    hp is vitals.heap_pressure of []\n"
         "    i is i + 1\n"
         "(stable of hp) and (hp > 0) and (hp < 1)");
-    int vit_ok = v6 && eigs_value_type(v6) == EIGS_TYPE_NUM &&
-                 (int)eigs_value_as_num(v6) == 1;
+    int vit_ok = v6 && eigs_value_type(v6) == EIGS_TYPE_BOOL &&
+                 eigs_value_as_bool(v6);
     if (v6) eigs_value_release(v6);
     if (eigs_has_error()) { vit_ok = 0; eigs_clear_error(); }
     serial_write(vit_ok ? "[m8] stable of heap_pressure = 1 (machine observes itself) OK\n"
@@ -2023,8 +2026,8 @@ int eigs_run_demo(void) {
         "q is task_read of [tid, \"progress\"]\n"
         "task_kill of tid\n"
         "(p == 3) and (q == 3) and (not (task_alive of tid))");
-    int task_ok = v7 && eigs_value_type(v7) == EIGS_TYPE_NUM &&
-                  (int)eigs_value_as_num(v7) == 1;
+    int task_ok = v7 && eigs_value_type(v7) == EIGS_TYPE_BOOL &&
+                  eigs_value_as_bool(v7);
     if (v7) eigs_value_release(v7);
     if (eigs_has_error()) { task_ok = 0; eigs_clear_error(); }
     serial_write(task_ok ? "[m9] task spawn/step*3/read/kill = 3 OK\n"
@@ -2051,8 +2054,8 @@ int eigs_run_demo(void) {
         "bad is task_read of [tid, \"verdicts_bad\"]\n"
         "task_kill of tid\n"
         "(sv >= 1) and (bad == 0)");
-    int sat_ok = v7s && eigs_value_type(v7s) == EIGS_TYPE_NUM &&
-                 (int)eigs_value_as_num(v7s) == 1;
+    int sat_ok = v7s && eigs_value_type(v7s) == EIGS_TYPE_BOOL &&
+                 eigs_value_as_bool(v7s);
     if (v7s) eigs_value_release(v7s);
     if (eigs_has_error()) { sat_ok = 0; eigs_clear_error(); }
     serial_write(sat_ok ? "[sat] CDCL solver task: pigeonhole 4-4 SAT in <=12 budgeted steps OK\n"
@@ -2154,8 +2157,8 @@ int eigs_run_demo(void) {
         "    i is i + 1\n"
         "irq_release of 1\n"
         "(ok == 1) and (sc == 0x2A)");
-    int irq_ok = v11 && eigs_value_type(v11) == EIGS_TYPE_NUM &&
-                 (int)eigs_value_as_num(v11) == 1;
+    int irq_ok = v11 && eigs_value_type(v11) == EIGS_TYPE_BOOL &&
+                 eigs_value_as_bool(v11);
     if (v11) eigs_value_release(v11);
     if (eigs_has_error()) {
         irq_ok = 0;
@@ -2198,8 +2201,8 @@ int eigs_run_demo(void) {
         "kbd_driver of (-1)\n"
         "task_kill of tid\n"
         "(ok == 1) and (tid >= 0) and (c1 == 65) and (c2 == 98) and (c3 == -1)");
-    int kbd_ok = v12 && eigs_value_type(v12) == EIGS_TYPE_NUM &&
-                 (int)eigs_value_as_num(v12) == 1;
+    int kbd_ok = v12 && eigs_value_type(v12) == EIGS_TYPE_BOOL &&
+                 eigs_value_as_bool(v12);
     if (v12) eigs_value_release(v12);
     if (eigs_has_error()) {
         kbd_ok = 0;
@@ -2285,8 +2288,8 @@ int eigs_run_demo(void) {
         "spkr.off of []\n"
         "g2 is bit_and of [(inb of 0x61), 3]\n"
         "(g1 == 3) and (g2 == 0)");
-    int spk_ok = v15 && eigs_value_type(v15) == EIGS_TYPE_NUM &&
-                 (int)eigs_value_as_num(v15) == 1;
+    int spk_ok = v15 && eigs_value_type(v15) == EIGS_TYPE_BOOL &&
+                 eigs_value_as_bool(v15);
     if (v15) eigs_value_release(v15);
     if (eigs_has_error()) { spk_ok = 0; eigs_clear_error(); }
     serial_write(spk_ok ? "[m12] spkr: PIT ch2 gate on/off via script driver OK\n"
@@ -2448,6 +2451,9 @@ static void repl_show_value(EigsValue *v) {
     case EIGS_TYPE_STR:
         con_write(eigs_value_as_string(v));
         con_putc('\n');
+        break;
+    case EIGS_TYPE_BOOL:
+        con_write(eigs_value_as_bool(v) ? "true\n" : "false\n");
         break;
     case EIGS_TYPE_NULL:
         break;                                    /* statements print nothing */
