@@ -1,0 +1,1 @@
+- EigenOS graphics key, mouse, and wheel events now report modifier flags as booleans, matching the hosted SDL backend (#15).

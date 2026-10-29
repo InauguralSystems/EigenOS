@@ -69,30 +69,30 @@ define handle(sc) as:
     # An E0'd 2A/AA is the "fake shift" some sets emit around extended
     # keys — it must not flip real shift state.
     if (idx == 0x2A) or (idx == 0x36):
-        if ext == 0:
-            if down == 1:
+        if not ext:
+            if down:
                 mods is bit_or of [mods, 1]
-            if down == 0:
+            if not down:
                 mods is bit_and of [mods, 6]
         return 0
     if idx == 0x1D:
-        if down == 1:
+        if down:
             mods is bit_or of [mods, 2]
-        if down == 0:
+        if not down:
             mods is bit_and of [mods, 5]
         return 0
     if idx == 0x38:
-        if down == 1:
+        if down:
             mods is bit_or of [mods, 4]
-        if down == 0:
+        if not down:
             mods is bit_and of [mods, 3]
         return 0
     local c is 0
-    if ext == 1:
+    if ext:
         c is ke0[idx]
-    if ext == 0:
+    if not ext:
         c is kmap[idx]
-        if (bit_and of [mods, 1]) == 1:
+        if bit_and of [mods, 1]:
             if kshift[idx] != 0:
                 c is kshift[idx]
             if (c >= 97) and (c <= 122):

@@ -1577,10 +1577,23 @@ static void dset_num(EigsValue *d, const char *k, double n) {
     eigs_value_dict_set(d, k, v);
     eigs_value_release(v);
 }
+static void dset_bool(EigsValue *d, const char *k, int b) {
+    EigsValue *v = eigs_value_new_bool(b != 0);
+    eigs_value_dict_set(d, k, v);
+    eigs_value_release(v);
+}
 static void dset_str(EigsValue *d, const char *k, const char *s) {
     EigsValue *v = eigs_value_new_string(s);
     eigs_value_dict_set(d, k, v);
     eigs_value_release(v);
+}
+
+/* Keep the event contract byte-for-byte in step with ext_gfx: key, mouse,
+ * and wheel events all expose the three modifier fields as bools. */
+static void dset_mods(EigsValue *d, int mods) {
+    dset_bool(d, "shift", mods & KMOD_SHIFT);
+    dset_bool(d, "ctrl",  mods & KMOD_CTRL);
+    dset_bool(d, "alt",   mods & KMOD_ALT);
 }
 
 static const char *key_name(int c, char *one) {
@@ -1632,6 +1645,7 @@ static EigsValue *b_gfx_poll(EigsValue *a) {
             dset_num(d, "y", (double)y);
             break;
         }
+        dset_mods(d, kbd_mods());
         return d;
     }
     int code, down, mods;
@@ -1641,9 +1655,7 @@ static EigsValue *b_gfx_poll(EigsValue *a) {
         dset_str(d, "type", down ? "keydown" : "keyup");
         dset_str(d, "key", key_name(code, one));
         dset_num(d, "code", (double)code);   /* forwardable via task_key */
-        dset_num(d, "shift", (mods & KMOD_SHIFT) ? 1 : 0);
-        dset_num(d, "ctrl",  (mods & KMOD_CTRL)  ? 1 : 0);
-        dset_num(d, "alt",   (mods & KMOD_ALT)   ? 1 : 0);
+        dset_mods(d, mods);
         return d;
     }
     return eigs_value_new_null();
@@ -2080,6 +2092,36 @@ int eigs_run_demo(void) {
                      (int)eigs_value_as_num(v8) == 1;
         if (v8) eigs_value_release(v8);
         if (eigs_has_error()) { gfx_ok = 0; eigs_clear_error(); }
+
+        /* Issue #15: exercise the production poll path, not merely the
+         * value constructor. Mouse fan-out is dequeued before the injected
+         * key, so this covers every mouse shape plus a key event. This was
+         * red when the key fields were nums and mouse fields were absent. */
+        kbd_inject('a', 1, KMOD_SHIFT);
+        ev_push(GE_MOVE, 10, 20, 0);
+        ev_push(GE_DOWN, 10, 20, 1);
+        ev_push(GE_UP, 10, 20, 1);
+        ev_push(GE_WHEEL, 0, 1, 0);
+        EigsValue *vm = eigs_eval_string(
+            "define boolmods(ev) as:\n"
+            "    return ((type of ev.shift) == \"bool\") and ((type of ev.ctrl) == \"bool\") and ((type of ev.alt) == \"bool\")\n"
+            "kinds is [\"mousemove\", \"mousedown\", \"mouseup\", \"wheel\", \"keydown\"]\n"
+            "ok is true\n"
+            "for kind in kinds:\n"
+            "    ev is gfx_poll of null\n"
+            "    ok is ok and (ev.type == kind) and (boolmods of ev)\n"
+            "ok is ok and ev.shift and (not ev.ctrl) and (not ev.alt)\n"
+            "ok");
+        int mods_ok = vm && eigs_value_type(vm) == EIGS_TYPE_BOOL &&
+                      eigs_value_as_bool(vm);
+        if (vm) eigs_value_release(vm);
+        if (eigs_has_error()) { mods_ok = 0; eigs_clear_error(); }
+        serial_write(mods_ok
+            ? "[m9.5] gfx key/mouse modifier fields are bool OK\n"
+            : "[m9.5] gfx key/mouse modifier field types FAILED\n");
+        if (!mods_ok) gfx_ok = 0;
+        kbd_inject('a', 0, 0);          /* restore live modifiers before REPL */
+
         if (gfx_ok && fb_vram_pixel(20, 20) != fb_pack(255, 64, 32)) {
             serial_write("[m9.5] VRAM readback mismatch at (20,20)\n");
             gfx_ok = 0;
