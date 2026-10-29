@@ -201,7 +201,7 @@ e is inet.icmp_take of []
 check of ["valid ICMP frame queued", type of e, "dict"]
 check of ["queued source ip", e["ip"], [10, 0, 2, 2]]
 check of ["queued segment length (IP payload, not padding)", buf_len of e["seg"], 40]
-check of ["queue drained -> null", type of (inet.icmp_take of []), "none"]
+check of ["queue drained -> null", inet.icmp_take of [], null]
 
 # ---- IPv4 planted faults: each dropped AND counted ----
 define fault(tag, bytes) as:
@@ -209,7 +209,7 @@ define fault(tag, bytes) as:
     reset of ([frame of bytes])
     inet.pump of []
     local q is inet.icmp_take of []
-    if (type of q) != "none":
+    if q != null:
         check of [f"{tag} (leaked to queue!)", 1, 0]
         return 0
     check of [tag, inet.stats["drops"] - d, 1.0]
