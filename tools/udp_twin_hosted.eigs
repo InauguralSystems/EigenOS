@@ -162,12 +162,12 @@ check of ["source port", d["sport"], 47000]
 
 reset of ([frame of reply_wrongport])
 d is udp.recv of [5000, 60]
-check of ["wrong-port datagram never delivered", type of d, "none"]
+check of ["wrong-port datagram never delivered", d, null]
 
 d0 is inet.stats["drops"]
 reset of ([frame of reply_badcsum])
 d is udp.recv of [5000, 60]
-check of ["bad UDP checksum dropped", type of d, "none"]
+check of ["bad UDP checksum dropped", d, null]
 check of ["bad checksum counted", inet.stats["drops"] - d0, 1.0]
 
 reset of ([frame of reply_zerocsum])
