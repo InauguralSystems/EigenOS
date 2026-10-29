@@ -60,8 +60,8 @@ System Information
 	Manufacturer: Gateway
 	Product Name: M-7317U
 	Version: Rev 1
-	Serial Number: LXW530X002837149B62500
-	UUID: cfe8a4de-38b5-c0be-748d-b051f10531ee
+	Serial Number: [redacted]
+	UUID: [redacted]
 	Wake-up Type: Power Switch
 	SKU Number: Not Specified
 	Family: Not Specified
@@ -72,7 +72,7 @@ Chassis Information
 	Type: Portable
 	Lock: Not Present
 	Version: Rev.1
-	Serial Number: LXW530X002837149B62500
+	Serial Number: [redacted]
 	Asset Tag: No Asset Tag
 	Boot-up State: Safe
 	Power Supply State: Safe
@@ -172,10 +172,10 @@ discrete GPU.
 
 ```
 2: enp6s0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc fq_codel state DOWN group default qlen 1000
-    link/ether 00:e0:b8:e8:a4:6f
+    link/ether 00:e0:b8:xx:xx:xx
 3: wlp2s0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
-    link/ether 00:22:69:8f:0e:e5
-    inet 192.168.40.108/24 brd 192.168.40.255 scope global dynamic noprefixroute wlp2s0
+    link/ether 00:22:69:xx:xx:xx
+    inet 192.168.x.x/24 brd 192.168.x.255 scope global dynamic noprefixroute wlp2s0
 ```
 
 Ethernet down (no cable), Wi-Fi up — `gh`/`scp` delivery from the dev box
@@ -186,8 +186,8 @@ works over the LAN.
 ```
 sda
 ├─sda1
-├─sda2 vfat FAT32 826C-FF6B                             505.8M   1% /boot/efi
-└─sda3 ext4 1.0   9ac3baaa-4703-4531-af4b-cea3aeefceec 228.9G  16% /
+├─sda2 vfat FAT32 [redacted]                             505.8M   1% /boot/efi
+└─sda3 ext4 1.0   [redacted] 228.9G  16% /
 ```
 
 `findmnt /boot` returns nothing → `/boot` lives on `sda3` (ext4 root), not
