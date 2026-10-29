@@ -201,12 +201,12 @@ build/eigsfs_%.o: $(EIGS)/src/freestanding/%.c | build
 build/hal.o: src/hal.c src/kheap.h src/serial.h src/timer.h src/keyboard.h src/vga.h src/fb.h src/mouse.h src/ata.h src/irqhook.h src/io.h src/stackguard.h | build
 	$(CC) $(RT_CFLAGS) -Isrc $< -o $@
 
-# Every HAL root EigenScript's freestanding contract lists must be defined by
-# the kernel side (never by the runtime's own objects) before the link runs.
+# Check the HAL roots the target's built runtime actually imports.  The ledger
+# is cross-target (narrow targets import atomic fallbacks that x86-64 does not).
 HAL_ROOTS := $(EIGS)/tools/freestanding_hal_roots.txt
 $(KERNEL): $(OBJS) $(EIGS_OBJS) linker.ld tools/hal_roots_check.sh $(HAL_ROOTS)
 	sh tools/hal_roots_check.sh $(HAL_ROOTS) $(OBJS) \
-	    $(filter-out build/eigs_%,$(EIGS_OBJS))
+	    build/hal.o -- $(filter-out build/hal.o,$(EIGS_OBJS))
 	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(EIGS_OBJS) -lgcc
 
 verify: $(KERNEL)
