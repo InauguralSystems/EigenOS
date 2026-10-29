@@ -1,0 +1,1 @@
+- Derive kernel HAL obligations from the target's built EigenScript objects instead of requiring another architecture's atomic fallbacks (#7).
