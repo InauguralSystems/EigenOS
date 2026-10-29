@@ -21,7 +21,7 @@ on:
         description: >-
           Plant a fault to prove the gates go red (none = a normal run).
           fail-verdict: the m5 self-test prints WRONG. drop-verdict: one OK
-          verdict line is deleted. drop-hal-root: pthread_self is removed.
+          verdict line is deleted. drop-hal-root: pthread_once is removed.
         type: choice
         default: none
         options: [none, fail-verdict, drop-verdict, drop-hal-root]
@@ -112,7 +112,9 @@ jobs:
             drop-verdict)
               sed -i '/serial_write("\[mn\] stack canary intact after the demo evals OK\\n");/d' src/hal.c ;;
             drop-hal-root)
-              sed -i '/^pthread_t pthread_self(void)/d' src/hal.c ;;
+              # Plant a root imported by this target: obligations are derived
+              # from the built runtime, and pthread_self currently is not one.
+              sed -i '/^int pthread_once(/,/^}/d' src/hal.c ;;
             *) echo "unknown plant: $PLANT"; exit 1 ;;
           esac
           # A plant that changed nothing proves nothing.
