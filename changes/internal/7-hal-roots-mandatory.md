@@ -1,0 +1,1 @@
+- The HAL-roots audit keeps common roots mandatory while selecting target-specific atomic fallbacks from runtime imports (#7).
