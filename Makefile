@@ -201,8 +201,8 @@ build/eigsfs_%.o: $(EIGS)/src/freestanding/%.c | build
 build/hal.o: src/hal.c src/kheap.h src/serial.h src/timer.h src/keyboard.h src/vga.h src/fb.h src/mouse.h src/ata.h src/irqhook.h src/io.h src/stackguard.h | build
 	$(CC) $(RT_CFLAGS) -Isrc $< -o $@
 
-# Check the HAL roots the target's built runtime actually imports.  The ledger
-# is cross-target (narrow targets import atomic fallbacks that x86-64 does not).
+# Check every mandatory common HAL root plus the atomic fallbacks that this
+# target's built runtime imports.  The ledger marks the section boundary.
 HAL_ROOTS := $(EIGS)/tools/freestanding_hal_roots.txt
 $(KERNEL): $(OBJS) $(EIGS_OBJS) linker.ld tools/hal_roots_check.sh $(HAL_ROOTS)
 	sh tools/hal_roots_check.sh $(HAL_ROOTS) $(OBJS) \
