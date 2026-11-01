@@ -1,0 +1,39 @@
+# Reviewed allowlist for tools/bundle_load_hosted.sh (hq#58, EOS-BUNDLE-1).
+#
+# A ROM-bundle module named here is NOT imported by the gate's runtime layer.
+# It is still linted (layer 1 covers every module). Everything else in the
+# bundle must import cleanly, hosted, or the gate is red.
+#
+# Format: one module stem per line, then ' -- ' and the reason. Every entry
+# needs a reason. A stem that is not in the bundle any more is a stale entry
+# and fails the gate, so the list cannot rot silently. Adding an entry is a
+# reviewed change: say in the PR why the module cannot be imported hosted and
+# what (if anything) covers it instead.
+
+# EigenOS apps whose top level opens the display and runs an event loop.
+desktop -- top level calls gfx_open, which returns a number on the machine (hal.c) and a bool hosted (EigenOS#11), so `if ok == 0` cannot run hosted; the WM itself is covered by tools/desktop_twin_hosted.eigs
+draw -- top level calls gfx_open, which returns a number on the machine (hal.c) and a bool hosted (EigenOS#11), so `if opened == 0` cannot run hosted; NO other runtime coverage (lint only)
+
+# EigenScript stdlib command-line programs: their top level reads argv and acts.
+pkg -- EigenScript's package-manager CLI; importing it runs the CLI and throws "missing subcommand"
+test_runner -- EigenScript's --test runner; importing it runs the test runner over the working directory
+
+# EigenScript stdlib fragments that lib/ui.eigs composes: their top level calls
+# ui.eigs's _register_* helpers, so they do not import on their own. They DO
+# run hosted: `import ui` (not allowlisted, so layer 2 imports it) load_files
+# every one of them as "lib/ui_w_*.eigs", which the flat staging dir does not
+# have, so the interpreter reads the sibling EigenScript checkout's lib/: the
+# same bytes the Makefile bundles. (Checked 2026-11-01: a parse error planted
+# in the flat staged copy alone leaves `import ui` green; one in a lib/ copy
+# beside ui.eigs turns it red.) So a staged-only edit is lint-only here.
+ui_w_basic -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_button -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_container -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_data -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_dialog -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_dock -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_input -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_menu -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_slider -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_special -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_viz -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`

@@ -5,8 +5,8 @@
 # clamps, key routing to focus, repl transcript via task_eval, teardown,
 # and the observer verdict through the slot dispatch (stuck reads
 # stable, advancing does not).
-# Run from the sibling EigenScript repo root (import list needs its lib/):
-#   cd ../EigenScript && ./src/eigenscript ../EigenOS/tools/desktop_twin_hosted.eigs
+# Run from the EigenOS repo root (CI runs every twin: tools/run_twins.sh):
+#   ../EigenScript/src/eigenscript tools/desktop_twin_hosted.eigs
 # Exits nonzero on any failure — the WM regression gate for MD work.
 
 # ---- stub state ----
@@ -181,7 +181,7 @@ append of [tape, [50, {"type": "mousedown", "x": 348, "y": 14}]]
 append of [tape, [80, {"type": "keydown", "key": "escape", "code": 27}]]
 
 # ---- run the WM ----
-load_file of "../EigenOS/demos/desktop.eigs"
+load_file of "../demos/desktop.eigs"
 
 # ---- assertions ----
 fails is 0
@@ -283,15 +283,15 @@ check of ["relaunch slot", wins[7].slot, 7]
 check of ["relaunch cascade x", wins[7].x, 212]
 check of ["spawn calls", len of spawned, 9]
 check of ["budget empty", len of freeslots, 0]
-check of ["reused slot recovered", sample_health of [7, 7], 0]
+check of ["reused slot recovered", sample_health of [7, 7], false]
 
 # teardown killed every remaining window (8) + the one closed live
 check of ["killed all", killed, 9]
 
 # observer through the slot dispatch: the wedged task (slot 2) reads
 # stable; the advancing counter (slot 0) does not
-check of ["stuck reads stable", sample_health of [2, 2], 1]
-check of ["advancing not stable", sample_health of [0, 0], 0]
+check of ["stuck reads stable", sample_health of [2, 2], true]
+check of ["advancing not stable", sample_health of [0, 0], false]
 
 print of ("HARNESS failures: " + (str of fails))
 if fails > 0:

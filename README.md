@@ -215,6 +215,22 @@ make dump       # boot headless, dump the VGA text screen out of the guest
 make shot       # boot headless, screendump the framebuffer -> build/screen.png
 ```
 
+Two hosted gates need only the sibling `../EigenScript` build, no VM, and run
+in CI on every push:
+
+```bash
+bash tools/run_twins.sh           # every tools/*_twin_hosted.eigs (population + per-twin check counts pinned)
+bash tools/bundle_load_hosted.sh  # lint + import every ROM-bundle module, and run each task's step(), hosted
+```
+
+The bundle gate's third layer calls `step()` of every task module on an idle
+machine (empty input queues, stubbed kernel builtins), so it sees a break
+inside `step()`. It does not reach code that `step()` skips when idle (key
+handlers, event branches) or other functions; those need a twin (EigenOS#21). A module the
+gate cannot import hosted is named, with its reason, in
+`tools/bundle_load_allowlist.txt`. `tools/run_twins_test.sh` and
+`tools/bundle_load_hosted_test.sh` plant faults and require each gate to go red.
+
 Build needs `gcc` + `binutils`. Booting needs `qemu-system-x86`, and `make iso`
 needs `grub-pc-bin`/`grub-common` + `xorriso`:
 

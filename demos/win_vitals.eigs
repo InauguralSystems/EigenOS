@@ -33,8 +33,8 @@ define step() as:
     gfx_text of [10, 78, "free memory", 180, 190, 210, 1]
     bar of [10, 92, 160, fr, 90, 200, 120]
     gfx_text of [10, 118, "uptime " + (str of up) + " s", 180, 190, 210, 1]
-    if (stable of hp) == 1:
+    if stable of hp:
         gfx_text of [10, 146, "heap: steady", 120, 230, 150, 1]
-    if (diverging of hp) == 1:
+    if diverging of hp:
         gfx_text of [10, 146, "heap: growing", 255, 120, 120, 1]
     return progress

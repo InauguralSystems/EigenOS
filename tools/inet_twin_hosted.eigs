@@ -5,9 +5,9 @@
 # tools/net_tower_vectors.py (an independent Python implementation).
 # Every planted fault asserts BOTH the drop and the rx_drops tick.
 # Run from the EigenOS repo root:
-#   (cd demos && eigenscript ../tools/inet_twin_hosted.eigs)
-# (cwd must be demos/ so the module-under-test resolves by stem, the
-# way the ROM bundle serves it on the machine.)
+#   bash tools/run_twins.sh   (runs every twin; this one from a staging
+#   directory holding demos/*.eigs flat by stem, the way the ROM bundle
+#   serves modules, since `import` resolves next to the importing file)
 # Exits nonzero on any failure — run before touching demos/inet.eigs.
 
 t_sent is []            # every net_send frame, captured as a byte list
@@ -51,6 +51,20 @@ define gfx_ticks() as:
     return t_tnow
 
 import inet
+
+# The kernel seam, bound into each module under test. An imported module
+# never reads the importer's globals (EigenScript#2180), and on the machine
+# these names are builtins that hal.c registers, so the stubs above are
+# written into each module's namespace. A module binding shadows the hosted
+# builtin of the same name, so gfx_ticks/gfx_delay are the taped stubs too.
+define seam(m) as:
+    m.net_mac is net_mac
+    m.net_send is net_send
+    m.net_recv is net_recv
+    m.gfx_delay is gfx_delay
+    m.gfx_ticks is gfx_ticks
+    return 0
+seam of inet
 
 fails is 0
 

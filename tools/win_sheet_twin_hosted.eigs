@@ -31,8 +31,8 @@ define gfx_text(a) as:
 define gfx_rect(a) as:
     return null
 
-load_file of "../eigen-sheet/sheet.eigs"
-load_file of "demos/sheetwin.eigs"
+load_file of "../../eigen-sheet/sheet.eigs"
+load_file of "../demos/sheetwin.eigs"
 
 fails is 0
 

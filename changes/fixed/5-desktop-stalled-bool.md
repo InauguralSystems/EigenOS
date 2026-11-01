@@ -1,0 +1,1 @@
+- The desktop no longer stops with "cannot compare bool and num" when it draws a window: the stalled verdict is the observer's `stable` boolean, and the title bar now tests it as one (hq#58).

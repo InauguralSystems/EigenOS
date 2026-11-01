@@ -6,7 +6,9 @@
 # (xid = the taped-ticks schedule), the committed lease, and the
 # planted faults: wrong xid, bad magic cookie, missing server id, NAK,
 # wrong-xid ACK. Run from the EigenOS repo root:
-#   (cd demos && eigenscript ../tools/dhcp_twin_hosted.eigs)
+#   bash tools/run_twins.sh   (runs every twin; this one from a staging
+#   directory holding demos/*.eigs flat by stem, the way the ROM bundle
+#   serves modules, since `import` resolves next to the importing file)
 # Exits nonzero on any failure — run before touching demos/dhcp.eigs.
 
 t_sent is []            # every net_send frame, captured as a byte list
@@ -93,6 +95,23 @@ define bytes_eq(tag, got, want) as:
 
 import dhcp
 import inet
+import udp
+
+# The kernel seam, bound into each module under test. An imported module
+# never reads the importer's globals (EigenScript#2180), and on the machine
+# these names are builtins that hal.c registers, so the stubs above are
+# written into each module's namespace. A module binding shadows the hosted
+# builtin of the same name, so gfx_ticks/gfx_delay are the taped stubs too.
+define seam(m) as:
+    m.net_mac is net_mac
+    m.net_send is net_send
+    m.net_recv is net_recv
+    m.gfx_delay is gfx_delay
+    m.gfx_ticks is gfx_ticks
+    return 0
+seam of dhcp
+seam of inet
+seam of udp
 
 offer1 is []
 extend of [offer1, [255, 255, 255, 255, 255, 255, 82, 85, 10, 0, 2, 2, 8, 0, 69, 0]]

@@ -30,9 +30,9 @@ define gfx_text(a) as:
 define gfx_rect(a) as:
     return null
 
-load_file of "../EigenScript/lib/int_vector.eigs"
-load_file of "../EigenMiniSat/lib/solver.eigs"
-load_file of "demos/satwin.eigs"
+load_file of "../../EigenScript/lib/int_vector.eigs"
+load_file of "../../EigenMiniSat/lib/solver.eigs"
+load_file of "../demos/satwin.eigs"
 
 fails is 0
 

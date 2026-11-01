@@ -12,8 +12,8 @@
 # truncation sweep of the log, asserting recovery lands exactly on the
 # committed-record-prefix state at each offset.
 #
-# Run from the sibling EigenScript repo root:
-#   ./src/eigenscript ../EigenOS/tools/tidefs_twin_hosted.eigs
+# Run from the EigenOS repo root (CI runs every twin: tools/run_twins.sh):
+#   ../EigenScript/src/eigenscript tools/tidefs_twin_hosted.eigs
 
 # ---- simulated disk (same stubs as the regionfs twin) ---------------
 disk is {}
@@ -52,9 +52,9 @@ define blk_write(lba, data) as:
     return 1
 
 # ---- the stack under test (byte-unmodified tidelog on regionfs) -----
-load_file of "../EigenOS/demos/regionfs.eigs"
-load_file of "../tidelog/src/cbor.eigs"
-load_file of "../tidelog/src/store.eigs"
+load_file of "../demos/regionfs.eigs"
+load_file of "../../tidelog/src/cbor.eigs"
+load_file of "../../tidelog/src/store.eigs"
 
 # ---- checks ----------------------------------------------------------
 fails is 0
@@ -144,7 +144,7 @@ store_delete of [s, "beta"]
 store_put of [s, "delta", 3.25]
 check of ["version after ops", s.version, 6]
 check of ["live keydir", eq_keydir of [s.keydir, expstates[6]], 1]
-check of ["get missing is null", (store_get of [s, "beta"]) == null, 1]
+check of ["get missing is null", (store_get of [s, "beta"]) == null, true]
 
 # ---- recovery equivalence: reopen replays the on-regionfs log -------
 s2 is store_open of "kv.log"
@@ -201,7 +201,7 @@ nlive is store_compact of s2
 check of ["compact live count", nlive, 3]
 check of ["compact tmp gone", file_exists of "kv.log.compact", 0]
 post_log is buf_len of (read_bytes_buf of "kv.log")
-check of ["compacted log smaller", post_log < pre_log, 1]
+check of ["compacted log smaller", post_log < pre_log, true]
 s4 is store_open of "kv.log"
 check of ["post-compact version", s4.version, 3]
 check of ["post-compact keydir", eq_keydir of [s4.keydir, expstates[6]], 1]
