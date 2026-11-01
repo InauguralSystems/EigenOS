@@ -7,13 +7,20 @@
 #
 # A twin passes only when ALL hold:
 #   - the interpreter exits 0 within TWIN_TIMEOUT seconds;
-#   - its output has at least one PASS line (a twin that checks nothing
-#     is not a pass) and no FAIL line (a twin that reports a failure but
-#     exits 0 is not a pass either).
-# The twin POPULATION is pinned: the glob must match exactly the PINNED
+#   - its output has no FAIL line (a twin that reports a failure but exits
+#     0 is not a pass);
+#   - it printed EXACTLY its pinned number of per-check PASS lines. Only a
+#     line that starts with PASS (after indentation) and then ':' or ' '
+#     counts: that is the per-check line every twin's check() prints. The
+#     summary banners ("net twin: ALL PASS", KBD_TWIN_ALL_PASS, ...) print
+#     whenever no check failed, including when NO check ran, so they never
+#     count. A twin whose checks are deleted, skipped or short-circuited
+#     goes red instead of passing on its banner.
+# The twin POPULATION is pinned too: the glob must match exactly the PINNED
 # list below. A twin that disappears, or a new one nobody enrolled, turns
-# the gate red instead of passing on the survivors. Adding a twin means
-# adding its name here in the same commit.
+# the gate red instead of passing on the survivors. Adding a twin, or a
+# check to a twin, means updating its entry here in the same commit; the
+# pin is the reviewed record of how much each twin examines.
 #
 # How a twin runs:
 #   - load_file twins resolve their subjects file-relative
@@ -33,7 +40,9 @@ ROOT=$(pwd -P)
 EIGS_BIN=${EIGS_BIN:-../EigenScript/src/eigenscript}
 TWIN_TIMEOUT=${TWIN_TIMEOUT:-120}
 
-PINNED="desktop dhcp icmp inet kbd net regionfs rtc spkr tidefs udp win_sat win_sheet"
+# name:checks -- the per-check PASS lines each twin must print (measured
+# 2026-11-01 against EigenScript 729e268e; hq#58).
+PINNED="desktop:58 dhcp:21 icmp:21 inet:38 kbd:22 net:12 regionfs:74 rtc:16 spkr:9 tidefs:21 udp:16 win_sat:11 win_sheet:15"
 
 die() { echo "twin-gate: FAIL: $*"; exit 1; }
 
@@ -41,7 +50,9 @@ case "$EIGS_BIN" in /*) ;; *) EIGS_BIN="$ROOT/$EIGS_BIN" ;; esac
 [ -x "$EIGS_BIN" ] || die "no hosted EigenScript at $EIGS_BIN (build it: make -C ../EigenScript)"
 
 found=$(cd tools && ls -1 *_twin_hosted.eigs 2>/dev/null | sed 's/_twin_hosted\.eigs$//' | sort)
-pinned=$(printf '%s\n' $PINNED | sort)
+pinned=$(printf '%s\n' $PINNED | sed 's/:.*//' | sort)
+bad_pin=$(printf '%s\n' $PINNED | grep -vE '^[a-z_][a-z0-9_]*:[1-9][0-9]*$')
+[ -z "$bad_pin" ] || die "malformed PINNED entr(y/ies) (want name:checks, checks > 0): $(echo $bad_pin)"
 [ -n "$found" ] || die "no tools/*_twin_hosted.eigs found"
 missing=$(comm -23 <(printf '%s\n' "$pinned") <(printf '%s\n' "$found"))
 extra=$(comm -13 <(printf '%s\n' "$pinned") <(printf '%s\n' "$found"))
@@ -68,25 +79,29 @@ for t in $found; do
     fi
     rc=$?
     ran=$((ran + 1))
-    npass=$(grep -c 'PASS' "$log")
+    npass=$(grep -cE '^[[:space:]]*PASS[: ]' "$log")
     nfail=$(grep -c 'FAIL' "$log")
+    want=$(printf '%s\n' $PINNED | sed -n "s/^$t://p")
     why=""
     [ $rc -eq 0 ] || why="exit $rc"
     [ $rc -eq 124 ] && why="timed out after ${TWIN_TIMEOUT}s"
-    [ "$npass" -gt 0 ] || why="${why:+$why, }no PASS line"
     [ "$nfail" -eq 0 ] || why="${why:+$why, }$nfail FAIL line(s)"
+    if [ -n "$want" ] && [ "$npass" -ne "$want" ]; then
+        why="${why:+$why, }$npass check(s) passed, pinned $want"
+    fi
     if [ -n "$why" ]; then
         failed="$failed $t"
         echo "twin-gate: $t: FAILED ($why)"
         grep -E 'FAIL|Error|error' "$log" | head -8 | sed 's/^/    /'
         tail -n 4 "$log" | sed 's/^/    | /'
     else
-        echo "twin-gate: $t: OK ($npass PASS$([ $staged -eq 1 ] && echo ', staged by stem'))"
+        echo "twin-gate: $t: OK ($npass of $want checks$([ $staged -eq 1 ] && echo ', staged by stem'))"
     fi
 done
 
 npinned=$(printf '%s\n' $PINNED | wc -l)
-echo "twin-gate: ran $ran twin(s); pinned population $npinned"
+total=$(printf '%s\n' $PINNED | awk -F: '{n += $2} END {print n}')
+echo "twin-gate: ran $ran twin(s); pinned population $npinned, $total checks"
 rc=0
 if [ -n "$missing" ]; then
     echo "twin-gate: FAIL: pinned twin(s) missing from tools/: $(echo $missing)"

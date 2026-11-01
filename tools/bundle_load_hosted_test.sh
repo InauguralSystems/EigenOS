@@ -6,6 +6,8 @@
 # unplanted sandbox must be green first.
 #
 #   bash tools/bundle_load_hosted_test.sh
+# Needs GNU sed (-i) and GNU tar (--exclude), as on the ubuntu CI runner; it
+# is not written for stock macOS userland.
 # EIGS_BIN and the sibling checkouts resolve as for the gate.
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -69,9 +71,29 @@ case_ parse "life: FAILED (lint: E002" \
 case_ undef "sched: FAILED (lint: E003" \
     "printf '\\ndefine planted() as:\\n    return no_such_builtin of []\\n' >> \"\$SB/demos/sched.eigs\""
 
-# 5. a top-level runtime error (the bool-migration shape: bool == number).
+# 5. a top-level runtime error (bool == number at module top level; layer 2).
 case_ runtime "win_counter: FAILED (import: exit 1)" \
     "printf '\\nplanted is (1 < 2) == 1\\n' >> \"\$SB/demos/win_counter.eigs\""
+
+# 5b. THE REAL SHAPE, inside a function body: win_vitals.eigs step() as it
+#     was on main before this fix, comparing the observer's bool verdict to
+#     a number. Import alone runs no function body, so only layer 3 sees it.
+case_ stepbool "win_vitals: FAILED (step: exit 1)" \
+    "plant demos/win_vitals.eigs 's/^    if stable of hp:\$/    if (stable of hp) == 1:/'"
+
+# 5c. the same class in another task's step(), reached only after an idle
+#     machine's empty key queue is drained (win_bounce draws when w > 0).
+case_ stepbody "win_bounce: FAILED (step: exit 1)" \
+    "plant demos/win_bounce.eigs 's/^        gfx_clear of \[16, 32, 28\]\$/        if (stable of x) == 1:\\n            x is 12\\n&/'"
+
+# 5d. a task module dropped from the step loop: the step pin must notice.
+case_ dropstep "bundle-load: FAIL: step examined" \
+    "plant tools/bundle_load_hosted.sh 's/^    nstep=\$((nstep + 1))\$/&\\n    [ \"\$stem\" = win_vitals ] \\&\\& continue/'"
+
+# 5e. lint exits nonzero with no error diagnostic (an empty JSON list): that
+#     is not a clean lint. A fake interpreter does it for life.eigs only.
+case_ lintexit "life: FAILED (lint: lint exited 1 with no error diagnostic)" \
+    "printf '#!/bin/bash\\ncase \"\$*\" in *--lint*life.eigs) echo \"[]\"; exit 1;; esac\\nexec \"%s\" \"\$@\"\\n' \"\$EIGS_BIN\" > \"\$SB/../fake\" && chmod +x \"\$SB/../fake\" && export EIGS_BIN=\"\$SB/../fake\""
 
 # 6. a kernel builtin that hal.c stops registering: its users must go red
 #    (the kernel allowlist is derived from hal.c, not copied).

@@ -1,0 +1,1 @@
+- The vitals window no longer dies on its first step with "cannot compare bool and num": `stable of` / `diverging of` heap pressure are the observer's booleans, and `demos/win_vitals.eigs` now tests them as booleans (hq#58).

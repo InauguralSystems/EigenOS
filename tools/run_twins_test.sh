@@ -7,6 +7,8 @@
 # plant would prove nothing either.
 #
 #   bash tools/run_twins_test.sh
+# Needs GNU sed (-i) and GNU tar (--exclude), as on the ubuntu CI runner; it
+# is not written for stock macOS userland.
 # EIGS_BIN and the sibling checkouts resolve as for tools/run_twins.sh.
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -75,7 +77,16 @@ sandbox extra; cp "$SB/tools/rtc_twin_hosted.eigs" "$SB/tools/rtc2_twin_hosted.e
 sandbox fail0; printf '\nprint of "  FAIL: planted"\n' >> "$SB/tools/net_twin_hosted.eigs"; gate; expect_red fail-line-exit0 "net: FAILED (1 FAIL line(s))"
 
 # 6. a twin that checks nothing and exits 0.
-sandbox vacuous; printf 'print of "nothing checked"\n' > "$SB/tools/rtc_twin_hosted.eigs"; gate; expect_red vacuous-twin "rtc: FAILED (no PASS line)"
+sandbox vacuous; printf 'print of "nothing checked"\n' > "$SB/tools/rtc_twin_hosted.eigs"; gate; expect_red vacuous-twin "rtc: FAILED (0 check(s) passed, pinned 16)"
+
+# 6b. every check deleted but the harness kept: the twin still exits 0 and
+#     still prints its "ALL PASS" banner, because no check failed. The
+#     banner must not count as a check.
+sandbox banner; plant tools/net_twin_hosted.eigs '/^ *check of \[/d' && plant tools/rtc_twin_hosted.eigs '/^ *check of \[/d' && {
+    gate; expect_red banner-only-net "net: FAILED (0 check(s) passed, pinned 12)"; expect_red banner-only-rtc "rtc: FAILED (0 check(s) passed, pinned 16)"; }
+
+# 6c. ONE check silently dropped: the population of checks shrinks by one.
+sandbox onecheck; plant tools/spkr_twin_hosted.eigs '0,/^check of \[/{/^check of \[/d}' && { gate; expect_red one-check-dropped "spkr: FAILED (8 check(s) passed, pinned 9)"; }
 
 # 7. the module-isolation seam dropped: inet's stubs never reach the module.
 sandbox seam; plant tools/inet_twin_hosted.eigs '/^seam of inet$/d' && { gate; expect_red seam-dropped "inet: FAILED"; }

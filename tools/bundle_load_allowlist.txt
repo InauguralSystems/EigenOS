@@ -19,15 +19,21 @@ pkg -- EigenScript's package-manager CLI; importing it runs the CLI and throws "
 test_runner -- EigenScript's --test runner; importing it runs the test runner over the working directory
 
 # EigenScript stdlib fragments that lib/ui.eigs composes: their top level calls
-# ui.eigs's _register_* helpers, so they do not import on their own.
-ui_w_basic -- fragment of lib/ui.eigs (calls ui's _register_widget at top level)
-ui_w_button -- fragment of lib/ui.eigs (calls ui's _register_widget at top level)
-ui_w_container -- fragment of lib/ui.eigs (calls ui's _register_widget at top level)
-ui_w_data -- fragment of lib/ui.eigs (calls ui's _register_widget at top level)
-ui_w_dialog -- fragment of lib/ui.eigs (calls ui's _register_widget at top level)
-ui_w_dock -- fragment of lib/ui.eigs (calls ui's _register_widget at top level)
-ui_w_input -- fragment of lib/ui.eigs (calls ui's _register_widget at top level)
-ui_w_menu -- fragment of lib/ui.eigs (calls ui's _register_widget at top level)
-ui_w_slider -- fragment of lib/ui.eigs (calls ui's _register_widget at top level)
-ui_w_special -- fragment of lib/ui.eigs (calls ui's _register_widget at top level)
-ui_w_viz -- fragment of lib/ui.eigs (calls ui's _register_widget at top level)
+# ui.eigs's _register_* helpers, so they do not import on their own. They DO
+# run hosted: `import ui` (not allowlisted, so layer 2 imports it) load_files
+# every one of them as "lib/ui_w_*.eigs", which the flat staging dir does not
+# have, so the interpreter reads the sibling EigenScript checkout's lib/: the
+# same bytes the Makefile bundles. (Checked 2026-11-01: a parse error planted
+# in the flat staged copy alone leaves `import ui` green; one in a lib/ copy
+# beside ui.eigs turns it red.) So a staged-only edit is lint-only here.
+ui_w_basic -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_button -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_container -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_data -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_dialog -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_dock -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_input -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_menu -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_slider -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_special -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`
+ui_w_viz -- fragment of lib/ui.eigs (calls ui's _register_widget at top level); top level runs under layer 2's `import ui`

@@ -19,11 +19,25 @@
 #   2. import: `import <stem>` in the staging directory, hosted, must exit 0
 #      within LOAD_TIMEOUT seconds. A module whose top level cannot run hosted
 #      is named in tools/bundle_load_allowlist.txt with its reason, and only
-#      there; it is skipped by THIS layer only. An allowlist entry for a stem
+#      there; it is skipped by layers 2 and 3. An allowlist entry for a stem
 #      that is not in the bundle fails the gate.
+#   3. step: importing runs only TOP-LEVEL code, but a window or worker task
+#      does its work in step(), which task_spawn/task_step call on the
+#      machine (src/hal.c: `step of []`; a step error kills the task). So
+#      every bundle module with a top-level `define step()` that is not
+#      allowlisted is imported and its step() called STEP_ROUNDS times,
+#      hosted, and must exit 0. The kernel builtins it (or a bundle module it
+#      imports) uses are bound into that module's namespace as the stubs of an
+#      idle machine (tools/bundle_step_driver.py says which values). This is
+#      the layer that sees a break inside a function body, the shape of both
+#      bool-migration breaks (desktop.eigs chrome(), win_vitals.eigs step()).
+#      It does NOT cover code that step() never reaches on an idle machine
+#      (key handlers, event branches) or functions other than step(); those
+#      need a twin (EigenOS#21).
 # The examined counts are pinned to the derived count: each layer must
-# examine every module (lint N of N; import N minus allowlisted), so a module
-# dropped from a loop turns the gate red instead of passing on the survivors.
+# examine every module (lint N of N; import N minus allowlisted; step every
+# non-allowlisted module that defines step()), so a module dropped from a
+# loop turns the gate red instead of passing on the survivors.
 # Failures name the module. EigenOS does not pin its siblings, so a red here
 # can be an upstream change (EOS-UNPIN-1): the module name says where to look.
 #
@@ -36,6 +50,7 @@ cd "$(dirname "$0")/.." || exit 1
 ROOT=$(pwd -P)
 EIGS_BIN=${EIGS_BIN:-../EigenScript/src/eigenscript}
 LOAD_TIMEOUT=${LOAD_TIMEOUT:-30}
+STEP_ROUNDS=${STEP_ROUNDS:-8}
 ALLOW=tools/bundle_load_allowlist.txt
 
 die() { echo "bundle-load: FAIL: $*"; exit 1; }
@@ -111,6 +126,10 @@ for d in diags:
     bad.append("%s line %s: %s" % (d.get("code"), d.get("line"), d.get("message")))
 if bad:
     print("; ".join(bad[:4]) + (" (+%d more)" % (len(bad) - 4) if len(bad) > 4 else ""))
+elif lrc != 0 and not any(d.get("severity") == "error" for d in diags):
+    # exit 1 is honest only when it reports (waived) kernel E003s; with no
+    # error diagnostic at all, a nonzero exit is a lint failure.
+    print("lint exited %d with no error diagnostic" % lrc)
 elif lrc not in (0, 1):
     print("lint exited %d" % lrc)
 PY
@@ -138,6 +157,29 @@ for f in "$ST"/*.eigs; do
     fi
 done
 
+# ---- layer 3: call step() of every task module --------------------------
+stepped=0
+nstep=0
+for f in "$ST"/*.eigs; do
+    stem=$(basename "$f" .eigs)
+    grep -qE '^define step\(\)' "$f" || continue
+    printf '%s\n' "$allowed" | grep -qx "$stem" && continue
+    nstep=$((nstep + 1))
+    if ! drv=$(python3 tools/bundle_step_driver.py "$ST" "$stem" "$W/kernel.txt" "$STEP_ROUNDS"); then
+        fail "$stem" "step: could not generate the driver"
+        continue
+    fi
+    (cd "$ST" && timeout "$LOAD_TIMEOUT" "$EIGS_BIN" -e "$drv") > "$W/step.log" 2>&1 < /dev/null
+    step_rc=$?
+    stepped=$((stepped + 1))
+    if [ $step_rc -ne 0 ]; then
+        why="step: exit $step_rc"
+        [ $step_rc -eq 124 ] && why="step: timed out after ${LOAD_TIMEOUT}s"
+        fail "$stem" "$why"
+        grep -m1 -E '^Error|error' "$W/step.log" | cut -c1-240 | sed 's/^/    /'
+    fi
+done
+
 # ---- pins ----------------------------------------------------------------
 rc=0
 stale=$(comm -23 <(printf '%s\n' "$allowed") <(ls "$ST" | sed 's/\.eigs$//' | sort))
@@ -156,9 +198,15 @@ if [ "$imported" -ne $((derived - nallowed)) ] || [ $((imported + skipped)) -ne 
     echo "bundle-load: FAIL: import examined $imported (+$skipped allowlisted) modules, the bundle has $derived"
     rc=1
 fi
+ntask=$(grep -lE '^define step\(\)' "$ST"/*.eigs | wc -l)
+echo "bundle-load: step examined $stepped of $nstep task module(s) ($ntask define step(), $((ntask - nstep)) allowlisted; $STEP_ROUNDS rounds each)"
+if [ "$stepped" -ne "$nstep" ] || [ "$nstep" -eq 0 ]; then
+    echo "bundle-load: FAIL: step examined $stepped task modules, the bundle has $nstep"
+    rc=1
+fi
 if [ -n "$failed" ]; then
     echo "bundle-load: FAIL: module(s) that do not load:$failed"
     rc=1
 fi
-[ $rc -eq 0 ] && echo "bundle-load: PASS: all $derived bundle modules lint clean; $imported import hosted"
+[ $rc -eq 0 ] && echo "bundle-load: PASS: all $derived bundle modules lint clean; $imported import hosted; $stepped task step()s run"
 exit $rc

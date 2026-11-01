@@ -12,7 +12,7 @@
 #   loop while i < 14:
 #       hp is vitals.heap_pressure of []
 #       i is i + 1
-#   stable of hp          # 1: the heap is quiet
+#   stable of hp          # true: the heap is quiet
 #   report of hp
 #
 # A leak shows up as `improving`/`diverging` on heap_pressure long before
