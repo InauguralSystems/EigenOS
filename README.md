@@ -215,6 +215,18 @@ make dump       # boot headless, dump the VGA text screen out of the guest
 make shot       # boot headless, screendump the framebuffer -> build/screen.png
 ```
 
+Two hosted gates need only the sibling `../EigenScript` build, no VM, and run
+in CI on every push:
+
+```bash
+bash tools/run_twins.sh           # every tools/*_twin_hosted.eigs (population pinned)
+bash tools/bundle_load_hosted.sh  # lint + import every ROM-bundle module, hosted
+```
+
+A module the second gate cannot import hosted is named, with its reason, in
+`tools/bundle_load_allowlist.txt`. `tools/run_twins_test.sh` and
+`tools/bundle_load_hosted_test.sh` plant faults and require each gate to go red.
+
 Build needs `gcc` + `binutils`. Booting needs `qemu-system-x86`, and `make iso`
 needs `grub-pc-bin`/`grub-common` + `xorriso`:
 

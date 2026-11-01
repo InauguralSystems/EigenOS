@@ -19,7 +19,7 @@ define inb(port) as:
 define gfx_delay(ms) as:
     return 1
 
-load_file of "demos/spkr.eigs"
+load_file of "../demos/spkr.eigs"
 
 # scaffolding from lib/harness.eigs (the twin-gate pattern, upstreamed)
 import harness

@@ -22,7 +22,7 @@ define kbd_inject(c, d, m) as:
     append of [out, [c, d, m]]
     return 1
 
-load_file of "demos/kbd.eigs"
+load_file of "../demos/kbd.eigs"
 
 fails is 0
 

@@ -141,13 +141,68 @@ jobs:
         run: make iso
 
       # The boot gate lays a regionfs store onto its disk with
-      # tools/mkstore.eigs, which needs the hosted interpreter.
+      # tools/mkstore.eigs, which needs the hosted interpreter, and so do the
+      # hosted gates after it. It builds even when a kernel step went red, so
+      # an upstream break of the kernel build cannot hide a twin or bundle
+      # regression behind a skipped step.
       - name: Build the hosted EigenScript
+        id: hosted
+        if: ${{ !cancelled() }}
         run: make -j"$(nproc)" -C EigenScript
 
       - name: Boot gate
         working-directory: EigenOS
         run: sh tools/boot_gate.sh build/boot_gate.serial.log
+
+      # hq#58: the twins (tools/*_twin_hosted.eigs) were documented as gates
+      # but nothing ran them, and all 13 had gone red unseen. Every twin runs,
+      # and the population is pinned in the script.
+      - name: Twin gates
+        if: ${{ !cancelled() && steps.hosted.outcome == 'success' }}
+        working-directory: EigenOS
+        run: bash tools/run_twins.sh
+
+      # hq#58: the boot gate exercises about 14 of the ROM bundle's modules;
+      # this loads all of them hosted (lint + import), pinned to the derived
+      # count. Skips only by name in tools/bundle_load_allowlist.txt.
+      - name: Bundle load gate
+        if: ${{ !cancelled() && steps.hosted.outcome == 'success' }}
+        working-directory: EigenOS
+        run: bash tools/bundle_load_hosted.sh
+
+      # The self-tests plant faults and require each gate to go red. They
+      # take about a minute, so a pull request or push runs them only when it
+      # touches a gate, its allowlist or this workflow; the nightly and every
+      # dispatch run them always. If the diff cannot be computed, they run.
+      - name: Does this run touch a hosted gate?
+        id: gatediff
+        if: ${{ !cancelled() && steps.hosted.outcome == 'success' }}
+        working-directory: EigenOS
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          run=true
+          if [ "$EVENT" = pull_request ] || [ "$EVENT" = push ]; then
+            if [ -n "$BASE" ] && [ "$BASE" != 0000000000000000000000000000000000000000 ] \
+               && git fetch -q --depth=1 origin "$BASE" \
+               && changed=$(git diff --name-only "$BASE" HEAD); then
+              printf '%s\n' "$changed"
+              printf '%s\n' "$changed" | grep -qE '^(tools/(run_twins|bundle_load_hosted)(_test)?\.sh|tools/bundle_load_allowlist\.txt|\.github/workflows/ci\.yml)$' \
+                || run=false
+            fi
+          fi
+          echo "self-tests: $run"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+      - name: Gate self-tests (planted faults must turn each gate red)
+        if: ${{ !cancelled() && steps.hosted.outcome == 'success' && steps.gatediff.outputs.run == 'true' }}
+        working-directory: EigenOS
+        run: |
+          rc=0
+          bash tools/run_twins_test.sh || rc=1
+          bash tools/bundle_load_hosted_test.sh || rc=1
+          exit $rc
 
       - name: Upload the serial log
         if: always()

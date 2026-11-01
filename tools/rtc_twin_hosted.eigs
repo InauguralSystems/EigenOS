@@ -21,7 +21,7 @@ define outb(port, v) as:
 define inb(port) as:
     return regs[str of sel]
 
-load_file of "demos/rtc.eigs"
+load_file of "../demos/rtc.eigs"
 
 fails is 0
 define check(tag, got, want) as:

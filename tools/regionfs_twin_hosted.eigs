@@ -11,8 +11,8 @@
 #      re-mounted from that crashed disk, and the visible state must
 #      equal EXACTLY the pre-op committed state (prefix) or the post-op
 #      state (all writes) — atomicity at every sector-write boundary.
-# Run from the sibling EigenScript repo root:
-#   ./src/eigenscript ../EigenOS/tools/regionfs_twin_hosted.eigs
+# Run from the EigenOS repo root (CI runs every twin: tools/run_twins.sh):
+#   ../EigenScript/src/eigenscript tools/regionfs_twin_hosted.eigs
 # Exits nonzero on any failure.
 
 # ---- simulated disk --------------------------------------------------
@@ -59,7 +59,7 @@ define blk_write(lba, data) as:
 
 # ---- the layer under test (loads into this scope, shadowing the
 # hosted fs builtins by the same names — exactly what we want) --------
-load_file of "../EigenOS/demos/regionfs.eigs"
+load_file of "../demos/regionfs.eigs"
 
 # ---- checks ----------------------------------------------------------
 fails is 0
@@ -96,7 +96,7 @@ define buf_eq_list(b, l) as:
 check of ["virgin mount refused", mount of [], 0]
 check of ["format", format of [8, 4], 1]
 check of ["absent exists", file_exists of "a", 0]
-check of ["absent read null", (read_bytes_buf of "a") == null, 1]
+check of ["absent read null", (read_bytes_buf of "a") == null, true]
 
 pa is mkbytes of [73, 1]
 check of ["create a", write_bytes of ["a", pa, 0], 1]

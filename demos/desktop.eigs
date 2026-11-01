@@ -46,9 +46,9 @@ import list
 define chrome(cx, cy, cw, ch, focused, stalled) as:
     # border ring + title bar + content backdrop for one window
     gfx_rect of [cx - 2, cy - 26, cw + 4, ch + 30, 70, 76, 96]
-    if stalled == 1:
+    if stalled:
         gfx_rect of [cx, cy - 24, cw, 22, 168, 40, 40]
-    if stalled == 0:
+    if not stalled:
         if focused == 1:
             gfx_rect of [cx, cy - 24, cw, 22, 46, 90, 150]
         if focused == 0:
@@ -140,7 +140,7 @@ define sample_health(slot, id) as:
     if slot == 7:
         p7 is sig + 0.0
         return stable of p7
-    return 0
+    return false
 
 define hit(px, py, rec) as:
     # window rect including chrome (title bar + border)
@@ -288,7 +288,7 @@ define resize_to(px, py) as:
 define draw_one(rec, focused, stalled) as:
     chrome of [rec.x, rec.y, rec.w, rec.h, focused, stalled]
     gfx_text of [rec.x + 8, rec.y - 18, rec.title, 220, 226, 240, 1]
-    if stalled == 1:
+    if stalled:
         gfx_text of [rec.x + rec.w - 88, rec.y - 18, "(stalled)", 255, 150, 150, 1]
     # the close box at the right end of the title bar
     gfx_rect of [rec.x + rec.w - 18, rec.y - 22, 16, 18, 60, 66, 88]

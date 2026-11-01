@@ -46,7 +46,7 @@ define gfx_ticks() as:
     tnow is tnow + 50
     return tnow
 
-load_file of "demos/net.eigs"
+load_file of "../demos/net.eigs"
 
 fails is 0
 
