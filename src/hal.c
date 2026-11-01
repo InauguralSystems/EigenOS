@@ -1993,7 +1993,7 @@ int eigs_run_demo(void) {
     /* M7.5: the machine has software — import from the ROM bundle. */
     EigsValue *v5 = eigs_eval_string(
         "import math\n"
-        "math.abs of -7");
+        "math.math_abs of -7");
     int rom_ok = v5 && eigs_value_type(v5) == EIGS_TYPE_NUM &&
                  (int)eigs_value_as_num(v5) == 7;
     if (v5) eigs_value_release(v5);
