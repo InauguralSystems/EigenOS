@@ -239,7 +239,15 @@ define draw_bar() as:
         gfx_rect of [c[0], 5, c[1] - c[0], 18, 40, 46, 64]
         gfx_text of [c[0] + 7, 10, apps[c[2]][5], 200, 208, 226, 1]
         i is i + 1
-    gfx_text of [420, 10, "windows are observed bindings -- esc quits", 110, 120, 150, 1]
+    # the hint starts after the last chip and is dropped when it would
+    # reach the free-slot counter (x 944); a fixed x overlapped the chips
+    # once edit and sheet joined the bar
+    local hint is "windows are observed bindings -- esc quits"
+    local hx is 420
+    if (len of chips) > 0:
+        hx is chips[(len of chips) - 1][1] + 16
+    if hx + (len of hint) * 8 < 930:
+        gfx_text of [hx, 10, hint, 110, 120, 150, 1]
     local free is len of freeslots
     if free > 0:
         gfx_text of [944, 10, (str of free) + " free", 140, 200, 150, 1]
