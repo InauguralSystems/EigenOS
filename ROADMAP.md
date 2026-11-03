@@ -919,6 +919,24 @@ upstream, never worked around.
          reftest directory at a time, never as "CSS".
       Not before M13's TCP lands, and #30's antialiased text matters
       for stage 5.
+- [ ] **M16 candidate — a native VPN (WireGuard).** Jon, 2026-11-03.
+      It needs UDP only, which M13-2 already ships, so it can land
+      before M15. WireGuard is the standard answer: deliberately small
+      (about 4k lines on Linux), formally analyzed, and every layer has
+      a public oracle:
+      1. **Crypto primitives**: X25519 (RFC 7748), ChaCha20-Poly1305
+         (RFC 8439), BLAKE2s (RFC 7693), HKDF. Oracle: each RFC's test
+         vectors, byte for byte. This is exact 32/64-bit integer work,
+         the first heavy consumer of Phase 2's int64 kind. Ship it as a
+         crypto package that also runs on the hosted runtime.
+      2. **The Noise_IK handshake** and the transport-data framing, per
+         the WireGuard whitepaper. Oracle: recorded handshakes from the
+         Linux `wg` implementation replayed against ours.
+      3. **A live tunnel** to a Linux `wg` peer on the same QEMU
+         `-netdev` pair, with ICMP and UDP inside it (#28's network row).
+      Key material never rides the trace tape: record ciphertext only,
+      and a replay re-derives nothing secret. That is a tape-first
+      design review item before stage 2.
 
 ## Non-goals
 
