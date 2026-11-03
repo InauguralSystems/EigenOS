@@ -108,12 +108,14 @@ build/gen/win_edit.eigs: $(EDIT)/edit.eigs demos/editwin.eigs | build
 # concatenation pattern as win_edit. Couples to the sibling
 # ../eigen-sheet checkout.
 # Twin gate: tools/win_sheet_twin_hosted.eigs.
+# sheet.eigs does `import pdf` (eigen-sheet#101, PDF export), so its sibling
+# pdf.eigs ships in the bundle too, byte-unmodified, as module `pdf`.
 SHEET := ../eigen-sheet
 build/gen/win_sheet.eigs: $(SHEET)/sheet.eigs demos/sheetwin.eigs | build
 	mkdir -p build/gen
 	{ cat $(SHEET)/sheet.eigs; echo; cat demos/sheetwin.eigs; } > $@
 
-BUNDLE_SRCS := $(wildcard $(EIGS)/lib/*.eigs) $(filter-out demos/satwin.eigs demos/editwin.eigs demos/sheetwin.eigs,$(wildcard demos/*.eigs)) build/gen/tidefs.eigs build/gen/win_sat.eigs build/gen/win_edit.eigs build/gen/win_sheet.eigs
+BUNDLE_SRCS := $(wildcard $(EIGS)/lib/*.eigs) $(filter-out demos/satwin.eigs demos/editwin.eigs demos/sheetwin.eigs,$(wildcard demos/*.eigs)) build/gen/tidefs.eigs build/gen/win_sat.eigs build/gen/win_edit.eigs build/gen/win_sheet.eigs $(SHEET)/pdf.eigs
 KERNEL := build/EigenOS.elf
 ISO    := build/EigenOS.iso
 
