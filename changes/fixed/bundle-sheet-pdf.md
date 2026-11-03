@@ -1,0 +1,1 @@
+- The spreadsheet window loads again: eigen-sheet#101 made `sheet.eigs` import its new sibling `pdf.eigs`, and the bundle now ships that file byte-unmodified as module `pdf` (main went red on bundle-load on 2026-11-03).
