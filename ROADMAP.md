@@ -895,6 +895,30 @@ upstream, never worked around.
       per-SPAWN and hung-eval gaps are not. Candidates: incremental
       compile at spawn, a spawn-progress seam the WM can draw, or real
       preemption.
+- [ ] **M15 candidate — a native browser.** Jon, 2026-11-03. It is the
+      byte-stream consumer the M13 TCP decision point is waiting for,
+      and it is built in stages, each with a public spec as its oracle
+      (the standard answers: what a browser is and how it behaves are
+      settled):
+      1. **TCP** (RFC 9293) in script on the frame seam. Oracle: a Linux
+         guest on the same `-netdev` pair (#28's network row).
+      2. **HTTP/1.1** (RFC 9110/9112). Oracle: a host server through
+         slirp, with byte-exact request and response transcripts.
+      3. **TLS 1.2/1.3.** The hard gate, since most of the web is HTTPS.
+         The standard answer is BearSSL (small, C, no dynamic allocation)
+         behind a carved seam; TLS in script is a later forcing function.
+         Oracle: the RFC 8448 test vectors plus a live handshake against
+         the host's `openssl s_server`.
+      4. **HTML parsing** (the WHATWG tokenizer and tree builder). Oracle:
+         html5lib-tests, the conformance corpus browsers themselves use.
+         It ships first as an ordinary EigenScript package, useful on its
+         own and on the hosted runtime, before EigenOS needs it.
+      5. **Rendering**: text mode first (lynx/w3m as the reference), then
+         CSS block and inline layout against the Web Platform Tests
+         reftests that apply. Layout is the long tail; it is scoped one
+         reftest directory at a time, never as "CSS".
+      Not before M13's TCP lands, and #30's antialiased text matters
+      for stage 5.
 
 ## Non-goals
 
