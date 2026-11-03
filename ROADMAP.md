@@ -904,11 +904,14 @@ upstream, never worked around.
          guest on the same `-netdev` pair (#28's network row).
       2. **HTTP/1.1** (RFC 9110/9112). Oracle: a host server through
          slirp, with byte-exact request and response transcripts.
-      3. **TLS 1.2/1.3.** The hard gate, since most of the web is HTTPS.
-         The standard answer is BearSSL (small, C, no dynamic allocation)
-         behind a carved seam; TLS in script is a later forcing function.
-         Oracle: the RFC 8448 test vectors plus a live handshake against
-         the host's `openssl s_server`.
+      3. **TLS 1.3, with 1.2 as fallback.** The hard gate, since most of
+         the web is HTTPS. The standard answer is Mbed TLS 3.x (Apache-2.0,
+         C, implements both versions) behind a carved seam. BearSSL was
+         considered and rejected because it does not implement TLS 1.3.
+         TLS in script is a later forcing function, and the seam is what
+         makes that a swap. Oracle: the RFC 8448 TLS 1.3 handshake traces,
+         plus live handshakes against the host's `openssl s_server` pinned
+         to `-tls1_3` and to `-tls1_2`.
       4. **HTML parsing** (the WHATWG tokenizer and tree builder). Oracle:
          html5lib-tests, the conformance corpus browsers themselves use.
          It ships first as an ordinary EigenScript package, useful on its
@@ -941,6 +944,18 @@ upstream, never worked around.
       you should have protection." This GATES going online: per-app
       permissions and the firewall land before M15 or M16 run against
       the real internet; QEMU-local work may proceed before that.
+      **What M17 promises.** It keeps EigenScript's threat model
+      (SECURITY.md): app authors are trusted, and the protection is
+      against mistakes, overreach and hostile network input, not against
+      hostile apps. Permissions restrict what an app can do; they do not
+      contain a compromise of the native runtime. The trusted computing
+      base is the kernel, the C runtime (VM, builtins, HAL) and the TLS
+      and crypto libraries. A native-runtime bug reachable from network
+      input defeats every row below, so the internet gate also needs
+      the runtime's fuzzing and sanitizer gates to be green on the
+      network parsers. Running untrusted or hostile apps is a separate,
+      later milestone, with ring-3 or hardware isolation and a revised
+      threat model as its prerequisite.
       Standard answers, strongest first:
       1. **Per-app permissions** (the phone model). Each window's
          EigsState gets only the builtins it was granted (fs, net,
@@ -981,6 +996,7 @@ upstream, never worked around.
   actually needs them (the kernel/task boundary is the runtime itself
   for now). M17 is that milestone for per-app permissions: going online
   needs them. Ring-3 isolation stays out of scope; the permission
-  boundary is the EigsState plus the builtin allowlist.
+  boundary is the EigsState plus the builtin allowlist, which restricts
+  trusted apps and does not contain hostile ones (see M17).
 - Adoption. EigenOS's consumers are its author and the language it
   sharpens.
