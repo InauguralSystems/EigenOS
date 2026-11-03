@@ -895,12 +895,108 @@ upstream, never worked around.
       per-SPAWN and hung-eval gaps are not. Candidates: incremental
       compile at spawn, a spawn-progress seam the WM can draw, or real
       preemption.
+- [ ] **M15 candidate — a native browser.** Jon, 2026-11-03. It is the
+      byte-stream consumer the M13 TCP decision point is waiting for,
+      and it is built in stages, each with a public spec as its oracle
+      (the standard answers: what a browser is and how it behaves are
+      settled):
+      1. **TCP** (RFC 9293) in script on the frame seam. Oracle: a Linux
+         guest on the same `-netdev` pair (#28's network row).
+      2. **HTTP/1.1** (RFC 9110/9112). Oracle: a host server through
+         slirp, with byte-exact request and response transcripts.
+      3. **TLS 1.3, with 1.2 as fallback.** The hard gate, since most of
+         the web is HTTPS. The standard answer is Mbed TLS 3.x (Apache-2.0,
+         C, implements both versions) behind a carved seam. BearSSL was
+         considered and rejected because it does not implement TLS 1.3.
+         TLS in script is a later forcing function, and the seam is what
+         makes that a swap. Oracle: the RFC 8448 TLS 1.3 handshake traces,
+         plus live handshakes against the host's `openssl s_server` pinned
+         to `-tls1_3` and to `-tls1_2`.
+      4. **HTML parsing** (the WHATWG tokenizer and tree builder). Oracle:
+         html5lib-tests, the conformance corpus browsers themselves use.
+         It ships first as an ordinary EigenScript package, useful on its
+         own and on the hosted runtime, before EigenOS needs it.
+      5. **Rendering**: text mode first (lynx/w3m as the reference), then
+         CSS block and inline layout against the Web Platform Tests
+         reftests that apply. Layout is the long tail; it is scoped one
+         reftest directory at a time, never as "CSS".
+      Not before M13's TCP lands, and #30's antialiased text matters
+      for stage 5.
+- [ ] **M16 candidate — a native VPN (WireGuard).** Jon, 2026-11-03.
+      It needs UDP only, which M13-2 already ships, so it can land
+      before M15. WireGuard is the standard answer: deliberately small
+      (about 4k lines on Linux), formally analyzed, and every layer has
+      a public oracle:
+      1. **Crypto primitives**: X25519 (RFC 7748), ChaCha20-Poly1305
+         (RFC 8439), BLAKE2s (RFC 7693), HKDF. Oracle: each RFC's test
+         vectors, byte for byte. This is exact 32/64-bit integer work,
+         the first heavy consumer of Phase 2's int64 kind. Ship it as a
+         crypto package that also runs on the hosted runtime.
+      2. **The Noise_IK handshake** and the transport-data framing, per
+         the WireGuard whitepaper. Oracle: recorded handshakes from the
+         Linux `wg` implementation replayed against ours.
+      3. **A live tunnel** to a Linux `wg` peer on the same QEMU
+         `-netdev` pair, with ICMP and UDP inside it (#28's network row).
+      Key material never rides the trace tape: record ciphertext only,
+      and a replay re-derives nothing secret. That is a tape-first
+      design review item before stage 2.
+- [ ] **M17 candidate — protection.** Jon, 2026-11-03: "if you are online
+      you should have protection." This GATES going online: per-app
+      permissions and the firewall land before M15 or M16 run against
+      the real internet; QEMU-local work may proceed before that.
+      **What M17 promises.** It keeps EigenScript's threat model
+      (SECURITY.md): app authors are trusted, and the protection is
+      against mistakes, overreach and hostile network input, not against
+      hostile apps. Permissions restrict what an app can do; they do not
+      contain a compromise of the native runtime. The trusted computing
+      base is the kernel, the C runtime (VM, builtins, HAL) and the TLS
+      and crypto libraries. A native-runtime bug reachable from network
+      input defeats every row below, so the internet gate also needs
+      the runtime's fuzzing and sanitizer gates to be green on the
+      network parsers. Running untrusted or hostile apps is a separate,
+      later milestone, with ring-3 or hardware isolation and a revised
+      threat model as its prerequisite.
+      Standard answers, strongest first:
+      1. **Per-app permissions** (the phone model). Each window's
+         EigsState gets only the builtins it was granted (fs, net,
+         devices), built on the runtime's existing sandbox allowlist. An
+         ungranted call fails loudly and is shown, never silently. Oracle:
+         Android's runtime-permission and macOS TCC behavior (public docs),
+         plus a hosted gate that each denied builtin raises in a
+         sandboxed state.
+      2. **Firewall**: per-app and per-port rules on the script frame
+         seam, default deny inbound. Oracle: nftables on a Linux guest
+         given the same rule set and the same packets.
+      3. **Signed packages**: install only signed code (Ed25519, from the
+         M16 crypto package). Oracle: the RFC 8032 vectors.
+      4. **Disk encryption**: the tidelog store encrypted at rest
+         (XChaCha20-Poly1305). Oracle: the published vectors and a
+         wrong-key refusal.
+      5. **Malware scanning** with ClamAV's public signature database,
+         mostly for files that leave for other OSes.
+- [ ] **Standard apps candidate — what everyone installs anyway.** Jon,
+      2026-11-03: native answers for the tools an OS usually doesn't
+      ship. Each has a public format or spec as its oracle:
+      - Backup and file history: a front end over tidelog's history
+        and the M11 journal.
+      - Password manager: the KeePass KDBX format, over the M16 crypto.
+      - TOTP authenticator: RFC 6238 vectors.
+      - Archives: zip and gzip over the existing inflate/deflate, with
+        Info-ZIP and gzip as the oracles.
+      - Ad and tracker blocking: a DNS blocklist from public lists (needs
+        a DNS resolver, RFC 1035, over UDP).
+      - PDF viewer: pairs with eigen-sheet's PDF export (#25) and #30's
+        fonts.
+      - Screenshots and recording, and clipboard history.
 
 ## Non-goals
 
 - POSIX compatibility, or any compatibility layer.
 - Multi-user, security domains, or ring-3 isolation before a milestone
   actually needs them (the kernel/task boundary is the runtime itself
-  for now).
+  for now). M17 is that milestone for per-app permissions: going online
+  needs them. Ring-3 isolation stays out of scope; the permission
+  boundary is the EigsState plus the builtin allowlist, which restricts
+  trusted apps and does not contain hostile ones (see M17).
 - Adoption. EigenOS's consumers are its author and the language it
   sharpens.
