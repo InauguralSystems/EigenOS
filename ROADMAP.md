@@ -937,12 +937,50 @@ upstream, never worked around.
       Key material never rides the trace tape: record ciphertext only,
       and a replay re-derives nothing secret. That is a tape-first
       design review item before stage 2.
+- [ ] **M17 candidate — protection.** Jon, 2026-11-03: "if you are online
+      you should have protection." This GATES going online: per-app
+      permissions and the firewall land before M15 or M16 run against
+      the real internet; QEMU-local work may proceed before that.
+      Standard answers, strongest first:
+      1. **Per-app permissions** (the phone model). Each window's
+         EigsState gets only the builtins it was granted (fs, net,
+         devices), built on the runtime's existing sandbox allowlist. An
+         ungranted call fails loudly and is shown, never silently. Oracle:
+         Android's runtime-permission and macOS TCC behavior (public docs),
+         plus a hosted gate that each denied builtin raises in a
+         sandboxed state.
+      2. **Firewall**: per-app and per-port rules on the script frame
+         seam, default deny inbound. Oracle: nftables on a Linux guest
+         given the same rule set and the same packets.
+      3. **Signed packages**: install only signed code (Ed25519, from the
+         M16 crypto package). Oracle: the RFC 8032 vectors.
+      4. **Disk encryption**: the tidelog store encrypted at rest
+         (XChaCha20-Poly1305). Oracle: the published vectors and a
+         wrong-key refusal.
+      5. **Malware scanning** with ClamAV's public signature database,
+         mostly for files that leave for other OSes.
+- [ ] **Standard apps candidate — what everyone installs anyway.** Jon,
+      2026-11-03: native answers for the tools an OS usually doesn't
+      ship. Each has a public format or spec as its oracle:
+      - Backup and file history: a front end over tidelog's history
+        and the M11 journal.
+      - Password manager: the KeePass KDBX format, over the M16 crypto.
+      - TOTP authenticator: RFC 6238 vectors.
+      - Archives: zip and gzip over the existing inflate/deflate, with
+        Info-ZIP and gzip as the oracles.
+      - Ad and tracker blocking: a DNS blocklist from public lists (needs
+        a DNS resolver, RFC 1035, over UDP).
+      - PDF viewer: pairs with eigen-sheet's PDF export (#25) and #30's
+        fonts.
+      - Screenshots and recording, and clipboard history.
 
 ## Non-goals
 
 - POSIX compatibility, or any compatibility layer.
 - Multi-user, security domains, or ring-3 isolation before a milestone
   actually needs them (the kernel/task boundary is the runtime itself
-  for now).
+  for now). M17 is that milestone for per-app permissions: going online
+  needs them. Ring-3 isolation stays out of scope; the permission
+  boundary is the EigsState plus the builtin allowlist.
 - Adoption. EigenOS's consumers are its author and the language it
   sharpens.
