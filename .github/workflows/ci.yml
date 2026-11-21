@@ -50,7 +50,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: InauguralSystems/EigenScript
-          ref: main
+          ref: 0e0c0d8ee7a4b59d9fa6c61379df67fc26f5caf6
           path: EigenScript
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
