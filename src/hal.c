@@ -427,13 +427,40 @@ static int task_id_of(EigsValue *v) {
     return id;
 }
 
-static double task_step_id(int id) {            /* shared: builtin + kbd pump */
-    if (id < 0 || id >= MAX_TASKS || !g_tasks[id].alive) return -1;
+/* A number a task holds, carried across the state switch WITH its kind.
+ * The kernel does not decide whether a task's number is whole: an int
+ * stays the exact int, a float stays the float (a fraction, inf and nan
+ * included). Anything that is not a number reads as the int 0. */
+typedef struct { int is_int; int64_t i; double d; } TaskNum;
+
+static TaskNum task_num_int(int64_t i) { TaskNum n = { 1, i, 0.0 }; return n; }
+
+static TaskNum task_num_of(EigsValue *v) {      /* v lives on the TASK state */
+    TaskNum n = { 1, 0, 0.0 };
+    if (!v || eigs_value_type(v) != EIGS_TYPE_NUM) return n;
+    if (eigs_value_is_int(v)) {
+        int ok = 0;
+        n.i = eigs_value_as_int(v, &ok);
+        if (!ok) n.i = 0;
+    } else {
+        n.is_int = 0;
+        n.d = eigs_value_as_num(v);
+    }
+    return n;
+}
+
+static EigsValue *task_num_new(TaskNum n) {     /* on the CALLER's state */
+    return n.is_int ? eigs_value_new_int(n.i) : eigs_value_new_num(n.d);
+}
+
+static int task_num_negative(TaskNum n) { return n.is_int ? n.i < 0 : n.d < 0; }
+
+static TaskNum task_step_id(int id) {           /* shared: builtin + kbd pump */
+    if (id < 0 || id >= MAX_TASKS || !g_tasks[id].alive) return task_num_int(-1);
     eigs_thread_switch(g_tasks[id].st);
     g_active_task = id;                         /* gfx lands in its viewport */
     EigsValue *r = eigs_eval_string("step of []");
-    double out = (r && eigs_value_type(r) == EIGS_TYPE_NUM)
-                     ? eigs_value_as_num(r) : 0.0;
+    TaskNum out = task_num_of(r);
     if (r) eigs_value_release(r);               /* released on the TASK state */
     g_active_task = -1;
     int failed = eigs_has_error();
@@ -448,14 +475,14 @@ static double task_step_id(int id) {            /* shared: builtin + kbd pump */
         eigs_clear_error();
     }
     eigs_thread_switch(g_primary);
-    if (failed) { g_tasks[id].alive = 0; return -1; }
+    if (failed) { g_tasks[id].alive = 0; return task_num_int(-1); }
     return out;
 }
 
 static EigsValue *b_task_step(EigsValue *arg) {
     int id = task_id_of(arg);
     if (id < 0) return eigs_value_new_int(-1);
-    return eigs_value_new_int(task_step_id(id));
+    return task_num_new(task_step_id(id));
 }
 
 static EigsValue *b_task_read(EigsValue *arg) {  /* [id, "name"] -> num */
@@ -477,11 +504,10 @@ static EigsValue *b_task_read(EigsValue *arg) {  /* [id, "name"] -> num */
     if (id < 0 || !name[0]) return eigs_value_new_int(0);
     eigs_thread_switch(g_tasks[id].st);
     EigsValue *g = eigs_get_global(name);
-    double out = (g && eigs_value_type(g) == EIGS_TYPE_NUM)
-                     ? eigs_value_as_num(g) : 0.0;
+    TaskNum out = task_num_of(g);
     if (g) eigs_value_release(g);               /* released on the TASK state */
     eigs_thread_switch(g_primary);
-    return eigs_value_new_int(out);
+    return task_num_new(out);
 }
 
 static EigsValue *b_task_alive(EigsValue *arg) {
@@ -2684,7 +2710,7 @@ void eigs_repl(void) {
                 int drv = g_kbd_driver;
                 if (drv >= 0 && g_tasks[drv].alive) {
                     if (irq_hook_pending(1)) {
-                        if (task_step_id(drv) < 0) {
+                        if (task_num_negative(task_step_id(drv))) {
                             g_kbd_driver = -1;
                             irq_hook_release_all();
                             con_write("\n[m12] kbd driver step FAILED — claim released, C driver back\n");

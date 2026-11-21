@@ -8,6 +8,6 @@ cr=$(printf '\r')
 rtc='^\[m12\] rtc: [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} UTC( .*)? OK'"$cr"'?$'
 # rtt is a whole count of ticks; loss is a ratio (lost / sent), so it may carry a fraction.
 icmp='^\[m13-2\] icmp: .* rtt [0-9]+ ms loss [0-9]+(\.[0-9]+)?( \([^)]*\))? \[[0-9]+/[0-9]+\] OK'"$cr"'?$'
-grep -qE "$rtc" "$log" || { echo "boot-gate: FAIL: m12 RTC verdict is not whole-number YYYY-MM-DD HH:MM:SS UTC"; fail=1; }
-grep -qE "$icmp" "$log" || { echo "boot-gate: FAIL: m13-2 ICMP verdict: rtt is not a whole number of ms, or loss is not a number"; fail=1; }
+grep -qE "$rtc" "$log" || { echo "boot-gate: FAIL: no m12 RTC verdict of the form YYYY-MM-DD HH:MM:SS UTC in whole numbers"; fail=1; }
+grep -qE "$icmp" "$log" || { echo "boot-gate: FAIL: no m13-2 ICMP verdict with rtt as a whole number of ms and loss as a number"; fail=1; }
 [ "$fail" -eq 0 ]
