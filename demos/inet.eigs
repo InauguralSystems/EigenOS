@@ -51,7 +51,7 @@ define be16get(b, o) as:
 
 define be16put(b, o, v) as:
     local lo is v % 256
-    buf_set of [b, o, (v - lo) / 256]
+    buf_set of [b, o, (v - lo) // 256]
     buf_set of [b, o + 1, lo]
 
 define be32get(b, o) as:
@@ -67,7 +67,7 @@ define bytes_at(b, o, n) as:
     local l is []
     local i is 0
     loop while i < n:
-        append of [l, buf_get of [b, o + i]]
+        append of [l, bit_or of [buf_get of [b, o + i], 0]]
         i is i + 1
     return l
 
@@ -96,7 +96,7 @@ define our_mac() as:
 define csum_fold(s) as:
     loop while s > 0xFFFF:
         local lo is s % 0x10000
-        s is lo + ((s - lo) / 0x10000)
+        s is lo + ((s - lo) // 0x10000)
     return s
 
 # Fold-sum of b[off, off+n) — 0xFFFF means "verifies clean" when the
@@ -166,7 +166,7 @@ define arp_resolve(ip, ms) as:
     if (type of hit) == "list":
         return hit
     local tries is 0
-    local bound is ms / 30
+    local bound is ms // 30
     loop while tries < bound:
         if (tries % 33) == 0:
             arp_whohas of (ip)

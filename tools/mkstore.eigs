@@ -74,7 +74,7 @@ for k in keys of disk:
         local v is buf_get of [b, i]
         if v != 0:
             nz is 1
-        line is line + HEX[floor of (v / 16)] + HEX[v % 16]
+        line is line + HEX[v // 16] + HEX[v % 16]
         i is i + 1
     if nz == 1:
         print of (k + " " + line)

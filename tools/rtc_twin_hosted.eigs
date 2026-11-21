@@ -62,6 +62,8 @@ t is now of []
 check of ["bcd/24h second", t.second, 33]
 check of ["bcd/24h minute", t.minute, 12]
 check of ["bcd/24h year", t.year, 2026]
+set_regs of [0x51, 0x28, 0x09, 0x21, 0x11, 0x26, 2]
+check of ["BCD stamp keeps whole numbers", stamp of [], "2026-11-21 09:28:51"]
 
 # BCD + 12h (status B = 0): 11:59:59 PM Dec 31 -> 23:59:59
 set_regs of [0x59, 0x59, 128 + 0x11, 0x31, 0x12, 0x25, 0]

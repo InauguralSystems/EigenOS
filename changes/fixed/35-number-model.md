@@ -1,0 +1,1 @@
+- EigenOS drivers now preserve exact integers for byte fields, counts, indices, RTC values, and whole-number quotients under EigenScript's new number model (#35).

@@ -43,7 +43,7 @@ define recv(port, ms) as:
     if (type of d) == "dict":
         return d
     local tries is 0
-    local bound is ms / 30
+    local bound is ms // 30
     loop while tries < bound:
         inet.pump of []
         d is inet.udp_take of (port)
@@ -93,7 +93,7 @@ define probe(dip, dport, sport) as:
 define echo_serve(port, ms) as:
     local nech is 0
     local tries is 0
-    local bound is ms / 30
+    local bound is ms // 30
     loop while tries < bound:
         inet.pump of []
         local d is inet.udp_take of (port)

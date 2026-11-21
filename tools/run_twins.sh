@@ -42,7 +42,7 @@ TWIN_TIMEOUT=${TWIN_TIMEOUT:-120}
 
 # name:checks -- the per-check PASS lines each twin must print (measured
 # 2026-11-01 against EigenScript 729e268e; hq#58).
-PINNED="desktop:58 dhcp:21 icmp:21 inet:38 kbd:22 net:12 regionfs:74 rtc:16 spkr:9 tidefs:21 udp:16 win_sat:11 win_sheet:15"
+PINNED="desktop:58 dhcp:21 icmp:21 inet:38 kbd:22 net:12 regionfs:74 rtc:17 spkr:9 tidefs:21 udp:16 win_sat:11 win_sheet:15"
 
 die() { echo "twin-gate: FAIL: $*"; exit 1; }
 

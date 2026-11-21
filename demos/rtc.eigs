@@ -35,7 +35,7 @@ define wait_settled() as:
 define fix(v, binmode) as:
     if binmode == 1:
         return v
-    return ((v - (v % 16)) / 16) * 10 + (v % 16)
+    return ((v - (v % 16)) // 16) * 10 + (v % 16)
 
 # One raw pass -> [sec, min, hour24, day, month, year2] (year2 = 0..99).
 define read_raw() as:
