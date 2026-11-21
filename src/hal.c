@@ -2033,7 +2033,12 @@ int eigs_run_demo(void) {
 
     /* M9: cooperative tasks — spawn a worker state, step it three
      * times, read its progress back (numbers only cross states), kill
-     * it. The scheduler-as-observer demo lives at the REPL. */
+     * it. A number crosses WITH its kind: the counter's progress is a
+     * float and stays one, the stalled worker's `junk` is a fraction
+     * (0.001 after one step) and is not cut, and an int a task holds
+     * (regionfs's ENT_SIZE, read from a second state that never mounts)
+     * arrives as an int. The scheduler-as-observer demo lives at the
+     * REPL. */
     EigsValue *v7 = eigs_eval_string(
         "tid is task_spawn of \"task_counter\"\n"
         "task_step of tid\n"
@@ -2041,7 +2046,16 @@ int eigs_run_demo(void) {
         "p is task_step of tid\n"
         "q is task_read of [tid, \"progress\"]\n"
         "task_kill of tid\n"
-        "(p == 3) and (q == 3) and (not (task_alive of tid))");
+        "sid is task_spawn of \"task_stuck\"\n"
+        "task_step of sid\n"
+        "j is task_read of [sid, \"junk\"]\n"
+        "task_kill of sid\n"
+        "fid is task_spawn of \"regionfs\"\n"
+        "e is task_read of [fid, \"ENT_SIZE\"]\n"
+        "task_kill of fid\n"
+        "(p == 3) and (q == 3) and (not (task_alive of tid)) and (j == 0.001)"
+        " and ((num_type of p) == \"float\") and ((num_type of q) == \"float\")"
+        " and (e == 32) and ((num_type of e) == \"int\")");
     int task_ok = v7 && eigs_value_type(v7) == EIGS_TYPE_BOOL &&
                   eigs_value_as_bool(v7);
     if (v7) eigs_value_release(v7);
