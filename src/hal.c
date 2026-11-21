@@ -176,19 +176,19 @@ void tls_init(void) {
  * journaled session replays with the RECORDED machine readings instead
  * of live ones. tick_hz / mem_total_pages are boot constants and stay
  * plain. */
-static EigsValue *vital_nondet(const char *name, double live) {
+static EigsValue *vital_nondet(const char *name, int64_t live) {
     EigsValue *v;
     if (eigs_replay_take(name, &v)) return v;
-    v = eigs_value_new_num(live);
+    v = eigs_value_new_int(live);
     eigs_trace_record_nondet(name, v);
     return v;
 }
 static EigsValue *vital_heap_used(EigsValue *a)   { (void)a; return vital_nondet("heap_used", (double)kheap_used_bytes()); }
 static EigsValue *vital_heap_mapped(EigsValue *a) { (void)a; return vital_nondet("heap_mapped", (double)kheap_mapped_bytes()); }
 static EigsValue *vital_mem_free(EigsValue *a)    { (void)a; return vital_nondet("mem_free_pages", (double)pmm_free_pages()); }
-static EigsValue *vital_mem_total(EigsValue *a)   { (void)a; return eigs_value_new_num((double)pmm_total_pages()); }
+static EigsValue *vital_mem_total(EigsValue *a)   { (void)a; return eigs_value_new_int((double)pmm_total_pages()); }
 static EigsValue *vital_ticks(EigsValue *a)       { (void)a; return vital_nondet("ticks", (double)timer_ticks()); }
-static EigsValue *vital_tick_hz(EigsValue *a)     { (void)a; return eigs_value_new_num((double)timer_hz()); }
+static EigsValue *vital_tick_hz(EigsValue *a)     { (void)a; return eigs_value_new_int((double)timer_hz()); }
 
 /* CPU die-temperature MARGIN (degrees below TjMax) via the Core-2 DTS.
  * Margin, not absolute: TjMax is model-specific and not architecturally
@@ -216,7 +216,11 @@ static EigsValue *vital_cpu_margin(EigsValue *a) {
         __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0x19C));
         if (lo & (1u << 31)) m = (double)((lo >> 16) & 0x7F);
     }
-    return vital_nondet("cpu_margin", m);
+    EigsValue *v;
+    if (eigs_replay_take("cpu_margin", &v)) return v;
+    v = eigs_value_new_num(m); /* temperature margin is a measured quantity */
+    eigs_trace_record_nondet("cpu_margin", v);
+    return v;
 }
 
 /* helpers defined further down (M9.5/M10 sections) */
@@ -294,7 +298,7 @@ static EigsValue *b_vital_at(EigsValue *a) {   /* [name, tick] -> num|null */
                 double x = vh_field((unsigned)found, name);
                 if (x >= 0) {
                     eigs_value_release(v);
-                    v = eigs_value_new_num(x);
+                    v = eigs_value_new_int(x);
                 }
             }
         }
@@ -330,11 +334,11 @@ static EigsValue *b_history_span(EigsValue *a) { /* -> [oldest, newest, count] *
     if (eigs_replay_take("history_span", &v)) return v;
     v = eigs_value_new_list(3);
     EigsValue *e;
-    e = eigs_value_new_num(g_vh_count ? (double)vh_tick(0) : 0);
+    e = eigs_value_new_int(g_vh_count ? (double)vh_tick(0) : 0);
     eigs_value_list_append(v, e); eigs_value_release(e);
-    e = eigs_value_new_num(g_vh_count ? (double)vh_tick(g_vh_count - 1) : 0);
+    e = eigs_value_new_int(g_vh_count ? (double)vh_tick(g_vh_count - 1) : 0);
     eigs_value_list_append(v, e); eigs_value_release(e);
-    e = eigs_value_new_num((double)g_vh_count);
+    e = eigs_value_new_int((double)g_vh_count);
     eigs_value_list_append(v, e); eigs_value_release(e);
     eigs_trace_record_nondet("history_span", v);
     return v;
@@ -383,23 +387,23 @@ static void register_task_side(void);   /* gfx + win_* into a task state */
 
 static EigsValue *b_task_spawn(EigsValue *arg) {
     char name[64];
-    if (!arg || eigs_value_type(arg) != EIGS_TYPE_STR) return eigs_value_new_num(-1);
+    if (!arg || eigs_value_type(arg) != EIGS_TYPE_STR) return eigs_value_new_int(-1);
     { const char *n = eigs_value_as_string(arg);
       int i = 0;
       for (; n && n[i] && i < 63; i++) name[i] = n[i];
       name[i] = 0; }
     const char *src = eigs_bundle_lookup(name);
-    if (!src) return eigs_value_new_num(-1);
+    if (!src) return eigs_value_new_int(-1);
     int slot = -1;
     for (int i = 0; i < MAX_TASKS; i++)
         if (!g_tasks[i].alive) { slot = i; break; }
-    if (slot < 0) return eigs_value_new_num(-1);
+    if (slot < 0) return eigs_value_new_int(-1);
     g_tasks[slot].has_view = 0;
     g_tasks[slot].kq_head = g_tasks[slot].kq_tail = 0;
     g_tasks[slot].wheel = 0;
 
     EigsState *st = eigs_state_new();
-    if (!st || !eigs_thread_switch(st)) return eigs_value_new_num(-1);
+    if (!st || !eigs_thread_switch(st)) return eigs_value_new_int(-1);
     eigs_state_init_runtime(st);
     register_task_side();                      /* draw/win seams (MD) */
     g_active_task = slot;                      /* no viewport yet: a drawing
@@ -410,10 +414,10 @@ static EigsValue *b_task_spawn(EigsValue *arg) {
     int failed = eigs_has_error();
     if (failed) { eigs_clear_error(); eigs_close(st); }
     eigs_thread_switch(g_primary);
-    if (failed) return eigs_value_new_num(-1);
+    if (failed) return eigs_value_new_int(-1);
     g_tasks[slot].st = st;
     g_tasks[slot].alive = 1;
-    return eigs_value_new_num((double)slot);
+    return eigs_value_new_int((double)slot);
 }
 
 static int task_id_of(EigsValue *v) {
@@ -450,14 +454,14 @@ static double task_step_id(int id) {            /* shared: builtin + kbd pump */
 
 static EigsValue *b_task_step(EigsValue *arg) {
     int id = task_id_of(arg);
-    if (id < 0) return eigs_value_new_num(-1);
-    return eigs_value_new_num(task_step_id(id));
+    if (id < 0) return eigs_value_new_int(-1);
+    return eigs_value_new_int(task_step_id(id));
 }
 
 static EigsValue *b_task_read(EigsValue *arg) {  /* [id, "name"] -> num */
     if (!arg || eigs_value_type(arg) != EIGS_TYPE_LIST ||
         eigs_value_list_len(arg) != 2)
-        return eigs_value_new_num(0);
+        return eigs_value_new_int(0);
     EigsValue *idv = eigs_value_list_get(arg, 0);
     EigsValue *nv  = eigs_value_list_get(arg, 1);
     char name[64]; name[0] = 0;
@@ -470,29 +474,29 @@ static EigsValue *b_task_read(EigsValue *arg) {  /* [id, "name"] -> num */
     int id = task_id_of(idv);
     if (idv) eigs_value_release(idv);
     if (nv)  eigs_value_release(nv);
-    if (id < 0 || !name[0]) return eigs_value_new_num(0);
+    if (id < 0 || !name[0]) return eigs_value_new_int(0);
     eigs_thread_switch(g_tasks[id].st);
     EigsValue *g = eigs_get_global(name);
     double out = (g && eigs_value_type(g) == EIGS_TYPE_NUM)
                      ? eigs_value_as_num(g) : 0.0;
     if (g) eigs_value_release(g);               /* released on the TASK state */
     eigs_thread_switch(g_primary);
-    return eigs_value_new_num(out);
+    return eigs_value_new_int(out);
 }
 
 static EigsValue *b_task_alive(EigsValue *arg) {
-    return eigs_value_new_num(task_id_of(arg) >= 0 ? 1 : 0);
+    return eigs_value_new_int(task_id_of(arg) >= 0 ? 1 : 0);
 }
 
 static EigsValue *b_task_kill(EigsValue *arg) {
     int id = task_id_of(arg);
-    if (id < 0) return eigs_value_new_num(0);
+    if (id < 0) return eigs_value_new_int(0);
     eigs_thread_switch(g_tasks[id].st);
     eigs_close(g_tasks[id].st);                 /* leaves the thread detached */
     eigs_thread_switch(g_primary);
     g_tasks[id].st = 0;
     g_tasks[id].alive = 0;
-    return eigs_value_new_num(1);
+    return eigs_value_new_int(1);
 }
 
 static void register_tasks(void) {
@@ -519,12 +523,12 @@ static int g_blk_unlocked;
 
 static EigsValue *b_blk_present(EigsValue *a) {
     (void)a;
-    return eigs_value_new_num(ata_present() ? 1 : 0);
+    return eigs_value_new_int(ata_present() ? 1 : 0);
 }
 
 static EigsValue *b_blk_sectors(EigsValue *a) {
     (void)a;
-    return eigs_value_new_num((double)ata_sectors());
+    return eigs_value_new_int((double)ata_sectors());
 }
 
 static EigsValue *b_blk_model(EigsValue *a) {
@@ -536,7 +540,7 @@ static EigsValue *b_blk_unlock(EigsValue *a) {
     (void)a;
     g_blk_unlocked = 1;
     serial_write("[m10] blk: WRITES UNLOCKED for this boot\n");
-    return eigs_value_new_num(1);
+    return eigs_value_new_int(1);
 }
 
 static EigsValue *b_blk_read(EigsValue *a) {   /* lba -> buffer[512] | null */
@@ -552,29 +556,29 @@ static EigsValue *b_blk_read(EigsValue *a) {   /* lba -> buffer[512] | null */
 }
 
 static EigsValue *b_blk_write(EigsValue *a) {  /* [lba, buffer[512]] -> 1|0 */
-    if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
+    if (!arg_list_min(a, 2)) return eigs_value_new_int(0);
     if (!g_blk_unlocked) {
         serial_write("[m10] blk_write REFUSED: writes locked (blk_unlock first)\n");
-        return eigs_value_new_num(0);
+        return eigs_value_new_int(0);
     }
     double lba = list_num(a, 0);
-    if (lba < 0) return eigs_value_new_num(0);
+    if (lba < 0) return eigs_value_new_int(0);
     EigsValue *data = eigs_value_list_get(a, 1);
     if (!data || eigs_value_type(data) != EIGS_TYPE_BUFFER ||
         eigs_value_buffer_len(data) != 512) {
         if (data) eigs_value_release(data);
-        return eigs_value_new_num(0);
+        return eigs_value_new_int(0);
     }
     uint8_t buf[512];
     for (int i = 0; i < 512; i++)
         buf[i] = (uint8_t)eigs_value_buffer_get(data, i);
     eigs_value_release(data);
-    return eigs_value_new_num(ata_write((uint64_t)lba, buf) ? 1 : 0);
+    return eigs_value_new_int(ata_write((uint64_t)lba, buf) ? 1 : 0);
 }
 
 static EigsValue *b_blk_flush(EigsValue *a) {
     (void)a;
-    return eigs_value_new_num(ata_flush() ? 1 : 0);
+    return eigs_value_new_int(ata_flush() ? 1 : 0);
 }
 
 static void register_blk(void) {
@@ -606,25 +610,25 @@ static EigsValue *b_in_common(EigsValue *a, int width) { /* port -> num|null */
     uint32_t v = width == 1 ? inb((uint16_t)p)
                : width == 2 ? inw((uint16_t)p)
                             : inl((uint16_t)p);
-    return eigs_value_new_num((double)v);
+    return eigs_value_new_int((double)v);
 }
 static EigsValue *b_inb(EigsValue *a) { return b_in_common(a, 1); }
 static EigsValue *b_inw(EigsValue *a) { return b_in_common(a, 2); }
 static EigsValue *b_inl(EigsValue *a) { return b_in_common(a, 4); }
 
 static EigsValue *b_out_common(EigsValue *a, int width) { /* [port,val] -> 1|0 */
-    if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
+    if (!arg_list_min(a, 2)) return eigs_value_new_int(0);
     double p = list_num(a, 0), v = list_num(a, 1);
     double vmax = width == 1 ? 255.0 : width == 2 ? 65535.0 : 4294967295.0;
-    if (p < 0 || p > 65535 || v < 0 || v > vmax) return eigs_value_new_num(0);
+    if (p < 0 || p > 65535 || v < 0 || v > vmax) return eigs_value_new_int(0);
     if (!g_blk_unlocked && port_is_ata((unsigned)p)) {
         serial_write("[m12] out refused: ATA ports locked (blk_unlock first)\n");
-        return eigs_value_new_num(0);
+        return eigs_value_new_int(0);
     }
     if      (width == 1) outb((uint16_t)p, (uint8_t)v);
     else if (width == 2) outw((uint16_t)p, (uint16_t)v);
     else                 outl((uint16_t)p, (uint32_t)v);
-    return eigs_value_new_num(1);
+    return eigs_value_new_int(1);
 }
 static EigsValue *b_outb(EigsValue *a) { return b_out_common(a, 1); }
 static EigsValue *b_outw(EigsValue *a) { return b_out_common(a, 2); }
@@ -651,13 +655,13 @@ static EigsValue *b_irq_claim(EigsValue *a) {    /* irq -> 1|0 (loud) */
                   ? (int)eigs_value_as_num(a) : -1;
     int ok = irq_hook_claim(irq);
     if (!ok) serial_write("[m12] irq_claim refused (only IRQ 1/12 divert)\n");
-    return eigs_value_new_num(ok);
+    return eigs_value_new_int(ok);
 }
 
 static EigsValue *b_irq_release(EigsValue *a) {
     if (a && eigs_value_type(a) == EIGS_TYPE_NUM)
         irq_hook_release((int)eigs_value_as_num(a));
-    return eigs_value_new_num(1);
+    return eigs_value_new_int(1);
 }
 
 static EigsValue *b_irq_read(EigsValue *a) {     /* irq -> byte | -1 */
@@ -685,9 +689,9 @@ static EigsValue *b_irq_dropped(EigsValue *a) {  /* irq -> lost-byte count */
 static int g_kbd_driver = -1;                    /* task id, -1 = none */
 
 static EigsValue *b_kbd_inject(EigsValue *a) {   /* [code, down, mods] -> 1 */
-    if (!arg_list_min(a, 3)) return eigs_value_new_num(0);
+    if (!arg_list_min(a, 3)) return eigs_value_new_int(0);
     kbd_inject((int)list_num(a, 0), (int)list_num(a, 1), (int)list_num(a, 2));
-    return eigs_value_new_num(1);
+    return eigs_value_new_int(1);
 }
 
 static EigsValue *b_kbd_take(EigsValue *a) {     /* -> char code | -1 */
@@ -698,7 +702,7 @@ static EigsValue *b_kbd_take(EigsValue *a) {     /* -> char code | -1 */
 static EigsValue *b_kbd_driver(EigsValue *a) {   /* tid -> 1; -1 unregisters */
     int id = task_id_of(a);
     g_kbd_driver = id;                           /* invalid/negative = none */
-    return eigs_value_new_num(id >= 0 ? 1 : 0);
+    return eigs_value_new_int(id >= 0 ? 1 : 0);
 }
 
 static void register_irq(void) {
@@ -724,7 +728,7 @@ static void register_irq(void) {
  * state evolution. net_present/net_mac are boot constants. */
 static EigsValue *b_net_present(EigsValue *a) {
     (void)a;
-    return eigs_value_new_num(e1000_present() ? 1 : 0);
+    return eigs_value_new_int(e1000_present() ? 1 : 0);
 }
 
 static EigsValue *b_net_mac(EigsValue *a) {      /* -> buffer[6] */
@@ -738,13 +742,13 @@ static EigsValue *b_net_mac(EigsValue *a) {      /* -> buffer[6] */
 
 static EigsValue *b_net_send(EigsValue *a) {     /* buffer -> 1|0 */
     if (!a || eigs_value_type(a) != EIGS_TYPE_BUFFER)
-        return eigs_value_new_num(0);
+        return eigs_value_new_int(0);
     int n = eigs_value_buffer_len(a);
-    if (n < 14 || n > E1000_FRAME_MAX) return eigs_value_new_num(0);
+    if (n < 14 || n > E1000_FRAME_MAX) return eigs_value_new_int(0);
     uint8_t f[E1000_FRAME_MAX];
     for (int i = 0; i < n; i++)
         f[i] = (uint8_t)eigs_value_buffer_get(a, i);
-    return eigs_value_new_num(e1000_send(f, n) ? 1 : 0);
+    return eigs_value_new_int(e1000_send(f, n) ? 1 : 0);
 }
 
 static EigsValue *b_net_recv(EigsValue *a) {     /* -> buffer | null */
@@ -911,7 +915,7 @@ static int fs_write_staged(const char *path, const unsigned char *bytes,
     for (int i = 0; i < n; i++) eigs_value_buffer_set(bv, i, (double)bytes[i]);
     eigs_set_global("fsd_data", bv);
     eigs_value_release(bv);
-    EigsValue *ap = eigs_value_new_num(append ? 1 : 0);
+    EigsValue *ap = eigs_value_new_int(append ? 1 : 0);
     eigs_set_global("fsd_app", ap);
     eigs_value_release(ap);
     int ok = fsd_eval_num(
@@ -926,12 +930,12 @@ static int fs_write_staged(const char *path, const unsigned char *bytes,
 static EigsValue *b_fs_file_exists(EigsValue *a) {
     char p[64];
     if (!path_arg(a, p, sizeof p) || !fs_ensure_mounted())
-        return eigs_value_new_num(0);
+        return eigs_value_new_int(0);
     EigsState *back = fsd_enter();
     fsd_set_str("fsd_path", p);
     double r = fsd_eval_num("regionfs.file_exists of fsd_path", 0);
     fsd_leave(back);
-    return eigs_value_new_num(r);
+    return eigs_value_new_int(r);
 }
 
 static EigsValue *b_fs_read_bytes_buf(EigsValue *a) {
@@ -959,91 +963,91 @@ static EigsValue *b_fs_read_text(EigsValue *a) {
 }
 
 static EigsValue *b_fs_write_bytes(EigsValue *a) {   /* [path, bytes {,app}] */
-    if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
+    if (!arg_list_min(a, 2)) return eigs_value_new_int(0);
     char p[64];
     EigsValue *pv = eigs_value_list_get(a, 0);
     int okp = pv && path_arg(pv, p, sizeof p);
     if (pv) eigs_value_release(pv);
-    if (!okp) return eigs_value_new_num(0);
+    if (!okp) return eigs_value_new_int(0);
     EigsValue *dv = eigs_value_list_get(a, 1);
     int n = 0;
     unsigned char *tmp = bytes_arg(dv, &n);
     if (dv) eigs_value_release(dv);
-    if (!tmp) return eigs_value_new_num(0);
+    if (!tmp) return eigs_value_new_int(0);
     int append = eigs_value_list_len(a) >= 3 && list_num(a, 2) != 0.0;
     int ok = fs_write_staged(p, tmp, n, append);
     free(tmp);
-    return eigs_value_new_num(ok);
+    return eigs_value_new_int(ok);
 }
 
 static EigsValue *b_fs_write_text(EigsValue *a) {    /* [path, str] */
-    if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
+    if (!arg_list_min(a, 2)) return eigs_value_new_int(0);
     char p[64];
     EigsValue *pv = eigs_value_list_get(a, 0);
     int okp = pv && path_arg(pv, p, sizeof p);
     if (pv) eigs_value_release(pv);
-    if (!okp) return eigs_value_new_num(0);
+    if (!okp) return eigs_value_new_int(0);
     EigsValue *sv = eigs_value_list_get(a, 1);
     const char *s = sv ? eigs_value_as_string(sv) : NULL;
     if (!s) {
         if (sv) eigs_value_release(sv);
-        return eigs_value_new_num(0);
+        return eigs_value_new_int(0);
     }
     int n = (int)strlen(s);
     unsigned char *tmp = malloc(n > 0 ? (size_t)n : 1);
     if (!tmp) {
         eigs_value_release(sv);
-        return eigs_value_new_num(0);
+        return eigs_value_new_int(0);
     }
     for (int i = 0; i < n; i++) tmp[i] = (unsigned char)s[i];
     eigs_value_release(sv);
     int ok = fs_write_staged(p, tmp, n, 0);
     free(tmp);
-    return eigs_value_new_num(ok);
+    return eigs_value_new_int(ok);
 }
 
 static EigsValue *b_fs_rename(EigsValue *a) {        /* [old, new] */
-    if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
+    if (!arg_list_min(a, 2)) return eigs_value_new_int(0);
     char po[64], pn[64];
     EigsValue *ov = eigs_value_list_get(a, 0);
     EigsValue *nv = eigs_value_list_get(a, 1);
     int ok = ov && nv && path_arg(ov, po, sizeof po) && path_arg(nv, pn, sizeof pn);
     if (ov) eigs_value_release(ov);
     if (nv) eigs_value_release(nv);
-    if (!ok || !fs_ensure_mounted()) return eigs_value_new_num(0);
+    if (!ok || !fs_ensure_mounted()) return eigs_value_new_int(0);
     EigsState *back = fsd_enter();
     fsd_set_str("fsd_path", po);
     fsd_set_str("fsd_path2", pn);
     double r = fsd_eval_num("regionfs.rename of [fsd_path, fsd_path2]", 0);
     fsd_leave(back);
-    return eigs_value_new_num(r);
+    return eigs_value_new_int(r);
 }
 
 static EigsValue *b_fs_remove_file(EigsValue *a) {
     char p[64];
     if (!path_arg(a, p, sizeof p) || !fs_ensure_mounted())
-        return eigs_value_new_num(0);
+        return eigs_value_new_int(0);
     EigsState *back = fsd_enter();
     fsd_set_str("fsd_path", p);
     double r = fsd_eval_num("regionfs.remove_file of fsd_path", 0);
     fsd_leave(back);
-    return eigs_value_new_num(r);
+    return eigs_value_new_int(r);
 }
 
 static EigsValue *b_fs_mount(EigsValue *a) {         /* explicit (re)mount */
     (void)a;
     g_fs_mounted = 0;
-    return eigs_value_new_num(fs_ensure_mounted());
+    return eigs_value_new_int(fs_ensure_mounted());
 }
 
 static EigsValue *b_fs_format(EigsValue *a) {        /* the manual act */
     (void)a;
-    if (!g_fs_state) return eigs_value_new_num(0);
+    if (!g_fs_state) return eigs_value_new_int(0);
     EigsState *back = fsd_enter();
     double r = fsd_eval_num("regionfs.format of []", 0);
     fsd_leave(back);
     if (r == 1.0) g_fs_mounted = 1;
-    return eigs_value_new_num(r);
+    return eigs_value_new_int(r);
 }
 
 static void register_fs(void) {
@@ -1227,7 +1231,7 @@ static EigsValue *b_journal_on(EigsValue *a) {
     g_jrn_on = 1;
     jrn_sink_install();
     serial_write("[m11] journal: recording (inputs + machine readings)\n");
-    return eigs_value_new_num(1);
+    return eigs_value_new_int(1);
 }
 
 static EigsValue *b_journal_off(EigsValue *a) {
@@ -1242,7 +1246,7 @@ static EigsValue *b_journal_off(EigsValue *a) {
     g_jrn_dirty = 0;
     serial_write(ok ? "[m11] journal: written to the store\n"
                     : "[m11] journal: NOT written (empty or store refused)\n");
-    return eigs_value_new_num(ok ? n : 0);
+    return eigs_value_new_int(ok ? n : 0);
 }
 
 /* unescape one I record body [s, s+n) into a fresh C string */
@@ -1273,15 +1277,15 @@ static EigsValue *b_journal_replay(EigsValue *a) {
      * was doing). */
     char path[64] = "journal";
     if (a && eigs_value_type(a) == EIGS_TYPE_STR) {
-        if (!path_arg(a, path, sizeof path)) return eigs_value_new_num(0);
+        if (!path_arg(a, path, sizeof path)) return eigs_value_new_int(0);
     }
     if (g_jrn_on) {
         serial_write("[m11] journal_replay REFUSED while recording\n");
-        return eigs_value_new_num(0);
+        return eigs_value_new_int(0);
     }
     int n = 0;
     unsigned char *tape = fs_read_staged(path, &n);
-    if (!tape) return eigs_value_new_num(0);
+    if (!tape) return eigs_value_new_int(0);
     int ok = eigs_set_replay_tape((const char *)tape, (size_t)n, 0);
     /* parse the I records: the session's input lines, in order */
     rp_clear();
@@ -1310,14 +1314,14 @@ static EigsValue *b_journal_replay(EigsValue *a) {
     free(tape);                             /* the runtime copied it */
     serial_write(ok ? "[m11] journal: session loaded — replay begins after this eval\n"
                     : "[m11] journal: replay tape rejected\n");
-    return eigs_value_new_num(ok ? (double)g_rp_count : 0);
+    return eigs_value_new_int(ok ? (double)g_rp_count : 0);
 }
 
 static EigsValue *b_journal_stop(EigsValue *a) {
     (void)a;
     eigs_set_replay_tape(0, 0, 0);
     rp_clear();
-    return eigs_value_new_num(1);
+    return eigs_value_new_int(1);
 }
 
 static void register_journal(void) {
@@ -1398,16 +1402,16 @@ static void gfx_ctx(int *ox, int *oy) {
 
 static EigsValue *b_gfx_open(EigsValue *a) {
     (void)a;                          /* [w,h,title] accepted; mode is fixed */
-    if (!fb_active()) return eigs_value_new_num(0);   /* hosted-parity fail */
+    if (!fb_active()) return eigs_value_new_int(0);   /* hosted-parity fail */
     if (g_active_task >= 0)           /* a window is already "open": its
                                          viewport (1 if the WM gave it one) */
-        return eigs_value_new_num(g_tasks[g_active_task].has_view ? 1 : 0);
+        return eigs_value_new_int(g_tasks[g_active_task].has_view ? 1 : 0);
     vga_suspend(1);
     kbd_gfx_mode(1);                  /* keys become events, not REPL chars */
     fb_gfx_clear(0, 0, 0);
     fb_present();
     g_gfx_open = 1;
-    return eigs_value_new_num(1);
+    return eigs_value_new_int(1);
 }
 
 static EigsValue *b_gfx_close(EigsValue *a) {
@@ -1572,8 +1576,8 @@ static void pump_mouse(void) {
     }
 }
 
-static void dset_num(EigsValue *d, const char *k, double n) {
-    EigsValue *v = eigs_value_new_num(n);
+static void dset_num(EigsValue *d, const char *k, int64_t n) {
+    EigsValue *v = eigs_value_new_int(n);
     eigs_value_dict_set(d, k, v);
     eigs_value_release(v);
 }
@@ -1671,74 +1675,74 @@ static EigsValue *b_gfx_poll(EigsValue *a) {
  * clears the sum (0 = nothing since the last read).
  * win_w/win_h (task-side) — the window's content size. */
 static EigsValue *b_task_view(EigsValue *a) {
-    if (!arg_list_min(a, 5)) return eigs_value_new_num(0);
+    if (!arg_list_min(a, 5)) return eigs_value_new_int(0);
     EigsValue *idv = eigs_value_list_get(a, 0);
     int id = task_id_of(idv);
     if (idv) eigs_value_release(idv);
-    if (id < 0) return eigs_value_new_num(0);
+    if (id < 0) return eigs_value_new_int(0);
     g_tasks[id].vx = (int)list_num(a, 1);
     g_tasks[id].vy = (int)list_num(a, 2);
     g_tasks[id].vw = (int)list_num(a, 3);
     g_tasks[id].vh = (int)list_num(a, 4);
     g_tasks[id].has_view = (g_tasks[id].vw > 0 && g_tasks[id].vh > 0);
-    return eigs_value_new_num(g_tasks[id].has_view ? 1 : 0);
+    return eigs_value_new_int(g_tasks[id].has_view ? 1 : 0);
 }
 
 static EigsValue *b_task_key(EigsValue *a) {
-    if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
+    if (!arg_list_min(a, 2)) return eigs_value_new_int(0);
     EigsValue *idv = eigs_value_list_get(a, 0);
     int id = task_id_of(idv);
     if (idv) eigs_value_release(idv);
-    if (id < 0) return eigs_value_new_num(0);
+    if (id < 0) return eigs_value_new_int(0);
     unsigned next = (g_tasks[id].kq_head + 1) % TASK_KEYQ;
-    if (next == g_tasks[id].kq_tail) return eigs_value_new_num(0);  /* full */
+    if (next == g_tasks[id].kq_tail) return eigs_value_new_int(0);  /* full */
     g_tasks[id].keyq[g_tasks[id].kq_head] = (int)list_num(a, 1);
     g_tasks[id].kq_head = next;
-    return eigs_value_new_num(1);
+    return eigs_value_new_int(1);
 }
 
 static EigsValue *b_task_wheel(EigsValue *a) {  /* [id, dy] — accumulate */
-    if (!arg_list_min(a, 2)) return eigs_value_new_num(0);
+    if (!arg_list_min(a, 2)) return eigs_value_new_int(0);
     EigsValue *idv = eigs_value_list_get(a, 0);
     int id = task_id_of(idv);
     if (idv) eigs_value_release(idv);
-    if (id < 0) return eigs_value_new_num(0);
+    if (id < 0) return eigs_value_new_int(0);
     int w = g_tasks[id].wheel + (int)list_num(a, 1);
     if (w >  32767) w =  32767;   /* a window that never reads can't overflow */
     if (w < -32767) w = -32767;
     g_tasks[id].wheel = w;
-    return eigs_value_new_num(1);
+    return eigs_value_new_int(1);
 }
 
 static EigsValue *b_win_wheel(EigsValue *a) {   /* read-and-clear the delta */
     (void)a;
-    if (g_active_task < 0) return eigs_value_new_num(0);
+    if (g_active_task < 0) return eigs_value_new_int(0);
     int w = g_tasks[g_active_task].wheel;
     g_tasks[g_active_task].wheel = 0;
-    return eigs_value_new_num((double)w);
+    return eigs_value_new_int((double)w);
 }
 
 static EigsValue *b_win_key(EigsValue *a) {
     (void)a;
-    if (g_active_task < 0) return eigs_value_new_num(-1);
+    if (g_active_task < 0) return eigs_value_new_int(-1);
     unsigned t = g_tasks[g_active_task].kq_tail;
-    if (t == g_tasks[g_active_task].kq_head) return eigs_value_new_num(-1);
+    if (t == g_tasks[g_active_task].kq_head) return eigs_value_new_int(-1);
     int code = g_tasks[g_active_task].keyq[t];
     g_tasks[g_active_task].kq_tail = (t + 1) % TASK_KEYQ;
-    return eigs_value_new_num((double)code);
+    return eigs_value_new_int((double)code);
 }
 
 static EigsValue *b_win_w(EigsValue *a) {
     (void)a;
     int id = g_active_task;
-    return eigs_value_new_num(id >= 0 && g_tasks[id].has_view
+    return eigs_value_new_int(id >= 0 && g_tasks[id].has_view
                                   ? (double)g_tasks[id].vw : 0);
 }
 
 static EigsValue *b_win_h(EigsValue *a) {
     (void)a;
     int id = g_active_task;
-    return eigs_value_new_num(id >= 0 && g_tasks[id].has_view
+    return eigs_value_new_int(id >= 0 && g_tasks[id].has_view
                                   ? (double)g_tasks[id].vh : 0);
 }
 

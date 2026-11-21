@@ -102,6 +102,7 @@ fi
 # COM1 lines end in CRLF, so the exact match allows the \r.
 grep -qE '^\[m10\] fs: regionfs mounted, 1 file\(s\) OK'"$(printf '\r')"'?$' "$LOG" ||
     bad "m10 did not mount the one-file store (want '[m10] fs: regionfs mounted, 1 file(s) OK')"
+if ! sh tools/boot_line_kinds.sh "$LOG"; then fail=1; fi
 # A verdict line is a tagged self-test line carrying the word OK.
 nok=$(grep -cE '^\[[a-z0-9.-]+\] .*\bOK\b' "$LOG")
 if [ "$nok" -ne "$expected" ]; then

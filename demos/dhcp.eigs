@@ -109,7 +109,7 @@ define opt4(r, code) as:                  # 4-byte option as ip list, or 0
 # parsed dict or 0. Count-bounded; resend is the CALLER's schedule.
 define wait_reply(xid, want, ms) as:
     local tries is 0
-    local bound is ms // 30
+    local bound is ms / 30
     loop while tries < bound:
         local d is udp.recv of [68, 30]
         if (type of d) == "dict":
@@ -135,13 +135,13 @@ define acquire(ms) as:
     loop while attempt < 4:
         xid is xid + 1
         if (send_discover of (xid)) == 1:
-            local offer is wait_reply of [xid, 2, ms // 4]
+            local offer is wait_reply of [xid, 2, ms / 4]
             if (type of offer) == "dict":
                 local yip is offer["yiaddr"]
                 local server is opt4 of [offer, "54"]
                 if ((yip[0] + yip[1] + yip[2] + yip[3]) > 0) and ((type of server) == "list"):
                     send_request of [xid, yip, server]
-                    local ack is wait_reply of [xid, 5, ms // 4]
+                    local ack is wait_reply of [xid, 5, ms / 4]
                     if ack == "nak":
                         return {"ok": 0}
                     if (type of ack) == "dict":

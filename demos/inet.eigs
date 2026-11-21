@@ -166,7 +166,7 @@ define arp_resolve(ip, ms) as:
     if (type of hit) == "list":
         return hit
     local tries is 0
-    local bound is ms // 30
+    local bound is ms / 30
     loop while tries < bound:
         if (tries % 33) == 0:
             arp_whohas of (ip)
