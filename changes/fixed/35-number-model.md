@@ -1,0 +1,1 @@
+- EigenOS kernel builtins now return exact integers for whole-number hardware values while driver polling retains its established timeout behavior (#35).

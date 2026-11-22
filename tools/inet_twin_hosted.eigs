@@ -245,7 +245,7 @@ bad[24] is 0                             # re-checksum: 0x5F68+0x2000
 bad[25] is 0
 csum is inet.csum16 of [frame of bad, 14, 20]
 lo is csum % 256
-bad[24] is (csum - lo) / 256
+bad[24] is (csum - lo) // 256
 bad[25] is lo
 fault of ["fragment dropped by design", bad]
 
@@ -254,7 +254,7 @@ extend of [bad, goodicmp]
 bad[33] is 99                            # dst 10.0.2.99: not us
 csum is inet.csum16 of [frame of ([bad[14], bad[15], bad[16], bad[17], bad[18], bad[19], bad[20], bad[21], bad[22], bad[23], 0, 0, bad[26], bad[27], bad[28], bad[29], bad[30], bad[31], bad[32], bad[33]]), 0, 20]
 lo is csum % 256
-bad[24] is (csum - lo) / 256
+bad[24] is (csum - lo) // 256
 bad[25] is lo
 fault of ["wrong destination ip dropped", bad]
 

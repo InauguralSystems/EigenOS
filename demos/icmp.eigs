@@ -70,7 +70,7 @@ define ping(ip, ms) as:
             if lastmatch == 1:
                 local dt is (gfx_ticks of []) - t0
                 got is got + 1
-                rtt is dt + 0.0           # fresh value: the slot keeps trajectory
+                rtt is dt                 # record this sample in the RTT trajectory
                 loss is ((sent - got) / sent) + 0.0
                 return dt
             e is inet.icmp_take of []

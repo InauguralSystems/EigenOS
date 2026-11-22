@@ -54,7 +54,7 @@ define le_put(b, off, val, nbytes) as:
     local i is 0
     loop while i < nbytes:
         buf_set of [b, off + i, rem % 256]
-        rem is floor of (rem / 256)
+        rem is rem // 256
         i is i + 1
     return 0
 
@@ -62,7 +62,7 @@ define le_get(b, off, nbytes) as:
     local v is 0
     local i is nbytes - 1
     loop while i >= 0:
-        v is v * 256 + (buf_get of [b, off + i])
+        v is v * 256 + (bit_or of [buf_get of [b, off + i], 0])
         i is i - 1
     return v
 
@@ -159,7 +159,7 @@ define sb_load(b) as:
     loop while e < maxf:
         local off is ENT_BASE + e * ENT_SIZE
         if (buf_get of [b, off + 20]) == 1:
-            append of [tab, {"name": name_get of [b, off], "slot": buf_get of [b, off + 21], "len": le_get of [b, off + 22, 6]}]
+            append of [tab, {"name": name_get of [b, off], "slot": bit_or of [buf_get of [b, off + 21], 0], "len": le_get of [b, off + 22, 6]}]
         e is e + 1
     return 0
 
@@ -217,7 +217,7 @@ define format(want_slotsec, want_maxf) as:
         mf is 15
     local ss is want_slotsec
     if ss == null:
-        ss is floor of ((total - 2) / mf)
+        ss is (total - 2) // mf
     if ss > 65535:
         ss is 65535
     if ss < 1:
@@ -323,7 +323,7 @@ define write_bytes(path, data, appendflag) as:
     local pos is start
     local di is 0
     loop while di < dlen:
-        local sidx is floor of (pos / 512)
+        local sidx is pos // 512
         local soff is pos % 512
         local sec is buffer of 512
         if soff > 0:

@@ -16,11 +16,11 @@
 define on(freq) as:
     if freq < 20:
         return 0
-    local dv is 1193182 / freq
+    local dv is 1193182 // freq
     dv is dv - (dv % 1)
     outb of [0x43, 0xB6]
     outb of [0x42, dv % 256]
-    outb of [0x42, (dv - (dv % 256)) / 256]
+    outb of [0x42, (dv - (dv % 256)) // 256]
     local g is inb of 0x61
     outb of [0x61, bit_or of [g, 3]]
     return 1
